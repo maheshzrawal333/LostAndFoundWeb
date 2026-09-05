@@ -1,0 +1,412 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../../context/AuthContext';
+
+const API_BASE_URL = 'http://localhost:8081/api/v1';
+
+interface MessagesInboxProps {
+    isOpen: boolean;
+    onClose: () => void;
+    currentUser: {
+        name: string;
+        avatarUrl: string;
+    };
+}
+
+interface Attachment {
+    type: string;
+    url: string;
+    name: string;
+}
+
+interface Message {
+    id: string;
+    sender: 'me' | 'them' | 'system';
+    text: string;
+    time: string;
+    attachment?: Attachment;
+}
+
+interface Chat {
+    id: string;
+    itemTitle: string;
+    reference: string;
+    otherUser: string;
+    otherUserAvatar: string;
+    role: string;
+    lastMessage: string;
+    time: string;
+    unread: number;
+    status: 'OPEN' | 'RESOLVED';
+    messages: Message[];
+}
+
+export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, currentUser }) => {
+    const { token } = useAuth();
+
+    const [localChats, setLocalChats] = useState<Chat[]>([]);
+    const [activeChatId, setActiveChatId] = useState<string | null>(null);
+    const [chatInput, setChatInput] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSending, setIsSending] = useState(false);
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [pendingFile, setPendingFile] = useState<File | null>(null);
+    const [pendingFileUrl, setPendingFileUrl] = useState<string | null>(null);
+
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const fetchChats = async () => {
+        if (!token) return;
+        try {
+            const res = await fetch(`${API_BASE_URL}/chats`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data: Chat[] = await res.json();
+                setLocalChats(data);
+                // On desktop, auto-select first chat. On mobile, keep it null so list shows.
+                if (data.length > 0 && !activeChatId && window.innerWidth >= 768) {
+                    setActiveChatId(data[0].id);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch chats", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOpen) {
+            fetchChats();
+        } else {
+            setActiveChatId(null);
+            setLocalChats([]);
+        }
+    }, [isOpen, token]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [localChats, activeChatId]);
+
+    if (!isOpen) return null;
+
+    const activeChat = localChats.find(c => c.id === activeChatId);
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setPendingFile(file);
+            setPendingFileUrl(URL.createObjectURL(file));
+        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const removePendingFile = () => {
+        setPendingFile(null);
+        setPendingFileUrl(null);
+    };
+
+    const sendMessage = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if ((!chatInput.trim() && !pendingFile) || !activeChatId || !token) return;
+
+        setIsSending(true);
+        let uploadedAttachmentUrl = null;
+
+        try {
+            if (pendingFile) {
+                const formData = new FormData();
+                formData.append('file', pendingFile);
+                const fileRes = await fetch(`${API_BASE_URL}/files/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                if (fileRes.ok) {
+                    const fileData = await fileRes.json();
+                    uploadedAttachmentUrl = fileData.url;
+                }
+            }
+
+            const payload = {
+                text: chatInput.trim(),
+                attachmentUrl: uploadedAttachmentUrl,
+                attachmentType: pendingFile?.type || null,
+                attachmentName: pendingFile?.name || null
+            };
+
+            const res = await fetch(`${API_BASE_URL}/chats/${activeChatId}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                setChatInput('');
+                removePendingFile();
+                await fetchChats();
+            }
+        } catch (error) {
+            console.error("Failed to send message", error);
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    const handleResolveChat = async () => {
+        if (!activeChatId || !token) return;
+        try {
+            const res = await fetch(`${API_BASE_URL}/chats/${activeChatId}/resolve`, {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) await fetchChats();
+        } catch (error) {
+            console.error("Failed to resolve chat", error);
+        }
+    };
+
+    const getInitials = (name: string) => name ? name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : 'U';
+
+    const formatTime = (isoString: string) => {
+        if (!isoString) return '';
+        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    return (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-brand-dark/70 backdrop-blur-sm p-0 md:p-8 animate-in fade-in duration-200">
+            <div className="bg-white md:rounded-2xl shadow-2xl w-full h-full md:h-[85vh] md:max-w-6xl flex overflow-hidden border-0 md:border border-brand-lightest">
+
+                {/* --- LEFT PANEL: Chat List --- */}
+                {/* Hidden on mobile if a chat is active */}
+                <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] flex-col border-r border-slate-200 bg-slate-50 shrink-0`}>
+
+                    <div className="bg-slate-950 p-4 flex justify-between items-center shrink-0 h-20 border-b border-slate-800">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-brand-light font-bold overflow-hidden shadow-inner shrink-0">
+                                {currentUser.avatarUrl ? (
+                                    <img src={currentUser.avatarUrl} alt="Profile" className="w-full h-full object-cover" />
+                                ) : (
+                                    getInitials(currentUser.name)
+                                )}
+                            </div>
+                            <div>
+                                <h2 className="text-base font-bold text-white tracking-tight leading-tight">Secure Inbox</h2>
+                                <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{currentUser.name}</p>
+                            </div>
+                        </div>
+                        {/* Always visible close button for left panel */}
+                        <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-2 rounded-full focus:outline-none shrink-0">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        {isLoading ? (
+                            <div className="flex justify-center items-center h-full">
+                                <svg className="animate-spin h-8 w-8 text-brand-primary" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            </div>
+                        ) : localChats.length === 0 ? (
+                            <div className="flex flex-col justify-center items-center h-full text-slate-400 p-4 text-center">
+                                <svg className="w-12 h-12 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                                <p className="text-sm font-medium">Your inbox is empty.</p>
+                            </div>
+                        ) : (
+                            localChats.map((chat) => (
+                                <div
+                                    key={chat.id}
+                                    onClick={() => setActiveChatId(chat.id)}
+                                    className={`p-4 border-b border-slate-100 cursor-pointer transition-all hover:bg-slate-100 flex gap-3 items-center ${activeChatId === chat.id ? 'bg-white border-l-4 border-l-brand-primary' : 'border-l-4 border-l-transparent'}`}
+                                >
+                                    <div className="relative w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold shrink-0 border border-slate-300 overflow-hidden">
+                                        {chat.otherUserAvatar ? (
+                                            <img src={chat.otherUserAvatar} alt={chat.otherUser} className="w-full h-full object-cover" />
+                                        ) : (
+                                            getInitials(chat.otherUser)
+                                        )}
+                                        {chat.status === 'RESOLVED' && (
+                                            <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center backdrop-blur-[1px]">
+                                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex justify-between items-start mb-0.5">
+                                            <h4 className={`text-sm font-bold truncate pr-2 ${chat.status === 'RESOLVED' ? 'text-slate-500' : 'text-brand-dark'}`}>{chat.itemTitle}</h4>
+                                            <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap mt-0.5">{formatTime(chat.time)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <p className={`text-xs font-medium truncate pr-2 ${chat.status === 'RESOLVED' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                {chat.status === 'RESOLVED' ? (
+                                                    <span className="italic flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg> Closed</span>
+                                                ) : (
+                                                    <><span className="font-bold text-slate-700">{chat.otherUser.split(' ')[0]}</span>: {chat.lastMessage}</>
+                                                )}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* --- RIGHT PANEL: Active Chat --- */}
+                {/* Hidden on mobile if NO chat is active */}
+                <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-white relative`}>
+                    {activeChat ? (
+                        <>
+                            <div className="bg-white px-4 md:px-6 h-20 border-b border-slate-200 flex justify-between items-center shrink-0 shadow-sm z-10">
+                                <div className="flex items-center gap-3 md:gap-4">
+                                    {/* Mobile Back Button */}
+                                    <button onClick={() => setActiveChatId(null)} className="md:hidden text-slate-500 hover:text-brand-dark p-2 -ml-2 rounded-full">
+                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>
+                                    </button>
+
+                                    <div className="w-10 h-10 rounded-full bg-brand-lightest flex items-center justify-center text-brand-primary font-bold border border-brand-light overflow-hidden shrink-0">
+                                        {activeChat.otherUserAvatar ? (
+                                            <img src={activeChat.otherUserAvatar} alt={activeChat.otherUser} className="w-full h-full object-cover" />
+                                        ) : (
+                                            getInitials(activeChat.otherUser)
+                                        )}
+                                    </div>
+
+                                    <div>
+                                        <h3 className="text-base font-bold text-brand-dark leading-tight flex items-center gap-2">
+                                            <span className="truncate max-w-[120px] sm:max-w-xs">{activeChat.itemTitle}</span>
+                                            {activeChat.status === 'RESOLVED' && (
+                                                <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider hidden sm:inline-block">Resolved</span>
+                                            )}
+                                        </h3>
+                                        <p className="text-[10px] sm:text-xs font-semibold text-slate-500 truncate">
+                                            With <span className="text-brand-primary">{activeChat.otherUser}</span> • {activeChat.reference}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+                                    {activeChat.status === 'OPEN' && (
+                                        <button
+                                            onClick={handleResolveChat}
+                                            className="text-[10px] sm:text-xs font-bold bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200 transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                            <span className="hidden sm:inline">Mark Resolved</span>
+                                        </button>
+                                    )}
+                                    {/* Right panel close button */}
+                                    <button onClick={onClose} className="text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0">
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {activeChat.status === 'OPEN' && (
+                                <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-3 flex items-start gap-3 shrink-0">
+                                    <svg className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                    <div className="text-[10px] sm:text-xs font-medium text-amber-800 leading-relaxed">
+                                        <strong>Security Warning:</strong> Messages are NOT end-to-end encrypted and are monitored. Do not share financial information. <span className="font-bold underline hidden sm:inline">Communicating off-platform voids all system protections.</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex-1 p-4 sm:p-6 overflow-y-auto flex flex-col gap-4 custom-scrollbar bg-slate-50">
+                                {activeChat.messages.map((msg) => (
+                                    <div key={msg.id} className={`flex flex-col ${msg.sender === 'system' ? 'items-center my-4' : msg.sender === 'me' ? 'items-end' : 'items-start'}`}>
+
+                                        {msg.sender === 'system' ? (
+                                            <div className="bg-slate-200 text-slate-600 text-[10px] sm:text-xs font-bold px-4 py-2 rounded-full border border-slate-300 flex items-center gap-2 text-center max-w-[90%]">
+                                                <svg className="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                {msg.text}
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className={`max-w-[85%] sm:max-w-[70%] px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl text-sm font-medium shadow-sm ${
+                                                    msg.sender === 'me'
+                                                        ? 'bg-brand-primary text-white rounded-tr-sm'
+                                                        : 'bg-white border border-slate-200 text-brand-dark rounded-tl-sm'
+                                                }`}>
+                                                    {msg.attachment && (
+                                                        <div className="mb-2 rounded-lg overflow-hidden border border-white/20 bg-black/5">
+                                                            {msg.attachment.type?.startsWith('image/') ? (
+                                                                <img src={msg.attachment.url} alt="Attachment" className="max-w-full h-auto max-h-48 object-cover rounded-lg" />
+                                                            ) : (
+                                                                <a href={msg.attachment.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 bg-white/10 rounded-lg hover:bg-white/20">
+                                                                    <svg className="w-8 h-8 shrink-0 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                                    <span className="text-xs font-bold truncate underline">{msg.attachment.name || 'Download File'}</span>
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {msg.text && <div>{msg.text}</div>}
+                                                </div>
+                                                <span className="text-[10px] font-bold text-slate-400 mt-1 mx-1">{formatTime(msg.time)}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                                <div ref={messagesEndRef} />
+                            </div>
+
+                            {activeChat.status === 'RESOLVED' ? (
+                                <div className="p-4 bg-slate-100 border-t border-slate-200 shrink-0 text-center flex flex-col items-center justify-center gap-1">
+                                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chat Closed</p>
+                                </div>
+                            ) : (
+                                <div className="bg-white border-t border-slate-200 shrink-0 flex flex-col">
+                                    {pendingFile && (
+                                        <div className="px-4 pt-3 pb-1 flex items-center">
+                                            <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-3 pr-8 relative">
+                                                {pendingFile.type.startsWith('image/') && pendingFileUrl ? (
+                                                    <img src={pendingFileUrl} alt="Preview" className="w-10 h-10 object-cover rounded-md border border-slate-300" />
+                                                ) : (
+                                                    <div className="w-10 h-10 bg-slate-200 rounded-md flex items-center justify-center">
+                                                        <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                                    </div>
+                                                )}
+                                                <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{pendingFile.name}</span>
+                                                <button type="button" onClick={removePendingFile} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm">
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <form onSubmit={sendMessage} className="p-3 sm:p-4 flex gap-2 sm:gap-3 items-end pb-safe">
+                                        <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,.pdf,.doc,.docx" />
+                                        <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 sm:p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-lightest rounded-full transition-colors focus:outline-none shrink-0 mb-0.5">
+                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                        </button>
+                                        <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary text-sm font-medium text-brand-dark resize-none min-h-[45px] sm:min-h-[50px] max-h-[100px] custom-scrollbar" rows={1} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(e); } }} />
+                                        <button type="submit" disabled={(!chatInput.trim() && !pendingFile) || isSending} className="w-11 h-11 sm:w-12 sm:h-12 bg-brand-primary text-white rounded-full flex items-center justify-center hover:bg-brand-dark transition-all shadow-md disabled:opacity-50 disabled:shadow-none focus:outline-none shrink-0 mb-0.5">
+                                            {isSending ? (
+                                                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            ) : (
+                                                <svg className="w-5 h-5 -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                                            )}
+                                        </button>
+                                    </form>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400 relative">
+                            {/* Optional close button for desktop when no chat is open */}
+                            <button onClick={onClose} className="absolute top-6 right-6 text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0 hidden md:block">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                            <svg className="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                            <p className="font-medium">Select a conversation to view messages</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};

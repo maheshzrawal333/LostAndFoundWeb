@@ -14,11 +14,11 @@ export interface Item {
     category: ItemCategory;
     type: ItemType;
     description: string;
-    imageUrl?: string;
+    imageUrls?: string[];
     location: GeoLocation;
-    dateLostOrFound: string; // ISO date string
+    dateLostOrFound: string;
     status: ItemStatus;
-    hasSecretDetail: boolean; // Prompting claimants for verification
+    hasSecretDetail: boolean;
     reportedByUserId: string;
     createdAt: string;
 }
@@ -28,12 +28,12 @@ export interface CreateItemDTO {
     category: ItemCategory;
     type: ItemType;
     description: string;
-    imageUrl?: string;
+    imageUrls?: string[];
     latitude: number;
     longitude: number;
     addressText: string;
     dateLostOrFound: string;
-    secretVerificationQuestion?: string; // e.g., "What color is the keychain sticker?"
+    secretVerificationQuestion?: string;
 }
 
 export interface ClaimRequestDTO {
