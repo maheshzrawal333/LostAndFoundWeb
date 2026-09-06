@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { ItemType, ItemCategory } from '../../types/item.types';
 import { useAuth } from '../../context/AuthContext';
+import { NEPAL_LOCATIONS } from '../../constants/nepalLocations';
+import imageCompression from 'browser-image-compression';
 
 const API_BASE_URL = 'http://localhost:8081/api/v1';
 
@@ -9,26 +11,25 @@ interface ReportModalProps {
     onClose: () => void;
 }
 
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_RAW_SIZE_BYTES = 6 * 1024 * 1024; // 6MB
+
 export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => {
     const { token } = useAuth();
 
-    // Steps: FORM -> OTP
     const [step, setStep] = useState<'FORM' | 'OTP'>('FORM');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Form Data State
     const [reportType, setReportType] = useState<ItemType | ''>('');
     const [title, setTitle] = useState('');
     const [category, setCategory] = useState<ItemCategory | ''>('');
     const [description, setDescription] = useState('');
 
-    // Address State
     const [province, setProvince] = useState('');
     const [district, setDistrict] = useState('');
     const [municipality, setMunicipality] = useState('');
     const [ward, setWard] = useState('');
 
-    // Image & OTP State
     const [images, setImages] = useState<File[]>([]);
     const [otp, setOtp] = useState('');
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -39,9 +40,39 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
     const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
             const selectedFiles = Array.from(e.target.files);
-            const availableSlots = 3 - images.length;
-            const filesToAdd = selectedFiles.slice(0, availableSlots);
-            setImages((prev) => [...prev, ...filesToAdd]);
+
+            // Format validation
+            const invalidTypeFiles = selectedFiles.filter(f => !ALLOWED_IMAGE_TYPES.includes(f.type));
+            if (invalidTypeFiles.length > 0) {
+                setErrors(prev => ({ ...prev, images: 'Only image files (JPG, PNG, WEBP) are supported.' }));
+                return;
+            }
+
+            // Size validation (6MB limit)
+            const oversizedFiles = selectedFiles.filter(f => f.size > MAX_RAW_SIZE_BYTES);
+            if (oversizedFiles.length > 0) {
+                setErrors(prev => ({ ...prev, images: 'Each photo must be under 6MB.' }));
+                return;
+            }
+
+            setImages((prev) => {
+                // Anti-duplicate filter
+                const uniqueNewFiles = selectedFiles.filter(newFile =>
+                    !prev.some(existingFile =>
+                        existingFile.name === newFile.name && existingFile.size === newFile.size
+                    )
+                );
+
+                if (selectedFiles.length !== uniqueNewFiles.length) {
+                    setErrors(prevErrs => ({ ...prevErrs, images: 'Duplicate photos detected and removed.' }));
+                } else {
+                    setErrors(prevErrs => ({ ...prevErrs, images: '' }));
+                }
+
+                const availableSlots = 3 - prev.length;
+                const filesToAdd = uniqueNewFiles.slice(0, availableSlots);
+                return [...prev, ...filesToAdd];
+            });
         }
     };
 
@@ -49,14 +80,23 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
         setImages(images.filter((_, index) => index !== indexToRemove));
     };
 
+    const handleProvinceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setProvince(e.target.value);
+        setDistrict('');
+        if (errors.province) setErrors(prev => ({ ...prev, province: '' }));
+    };
+
     const validateForm = () => {
         const newErrors: Record<string, string> = {};
         if (!reportType) newErrors.reportType = 'Please select if the item is Lost or Found.';
         if (!title.trim()) newErrors.title = 'Title is required.';
+        if (title.length > 16) newErrors.title = 'Title cannot exceed 16 characters.';
         if (!category) newErrors.category = 'Category is required.';
         if (!description.trim()) newErrors.description = 'Description is required.';
+        if (description.length > 250) newErrors.description = 'Description cannot exceed 250 characters.';
         if (!province) newErrors.province = 'State/Province is required.';
         if (!district) newErrors.district = 'District is required.';
+        if (images.length === 0) newErrors.images = 'At least one photo is required.';
 
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
@@ -72,17 +112,35 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
     const uploadImages = async (): Promise<string[]> => {
         const uploadedUrls: string[] = [];
+
+        // Industry standard compression settings for lost/found listings
+        const options = {
+            maxSizeMB: 0.25, // Compress to ~250KB
+            maxWidthOrHeight: 1200, // HD max bounds
+            useWebWorker: true,
+            fileType: 'image/jpeg'
+        };
+
         for (const file of images) {
-            const formData = new FormData();
-            formData.append('file', file);
-            const response = await fetch(`${API_BASE_URL}/files/upload`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: formData,
-            });
-            if (response.ok) {
-                const data = await response.json();
-                uploadedUrls.push(data.url);
+            try {
+                const compressedFile = await imageCompression(file, options);
+                const formData = new FormData();
+                formData.append('file', compressedFile, file.name);
+
+                const response = await fetch(`${API_BASE_URL}/files/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData,
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    uploadedUrls.push(data.url || data.fileUrl);
+                } else {
+                    throw new Error('Failed to upload image to server.');
+                }
+            } catch (err: any) {
+                console.error("Compression/Upload error:", err);
+                throw new Error(err.message || "Failed to process photos.");
             }
         }
         return uploadedUrls;
@@ -94,7 +152,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
             return;
         }
 
-        // Mock OTP Verification Check
         if (otp !== '123456') {
             setErrors({ otp: 'Invalid verification code. Please try again.' });
             return;
@@ -105,7 +162,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
         try {
             const imageUrls = await uploadImages();
-            const addressText = [ward, municipality, district, province].filter(Boolean).join(', ');
+
+            const addressParts = [];
+            if (ward) addressParts.push(`Ward ${ward}`);
+            if (municipality) addressParts.push(municipality);
+            if (district) addressParts.push(district);
+            if (province) addressParts.push(province);
+            const addressText = addressParts.join(', ');
 
             const payload = {
                 title,
@@ -117,7 +180,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                 longitude: 85.3240,
                 addressText,
                 dateLostOrFound: new Date().toISOString(),
-                // Send nulls to bypass backend secret requirements
                 secretVerificationQuestion: null,
                 secretAnswer: null
             };
@@ -131,11 +193,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) throw new Error('Failed to create item');
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.message || errorData.general || 'Failed to create item');
+            }
 
             resetAndClose();
-        } catch (error) {
-            setErrors({ general: 'Failed to publish post. Please try again.' });
+        } catch (error: any) {
+            setErrors({ general: error.message || 'Failed to publish post. Please try again.' });
         } finally {
             setIsSubmitting(false);
         }
@@ -176,7 +241,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                 </div>
 
                 <div className="p-6 overflow-y-auto flex flex-col gap-8 custom-scrollbar">
-
                     {step === 'FORM' ? (
                         <>
                             {errors.general && (
@@ -185,7 +249,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                 </div>
                             )}
 
-                            {/* Type Selection */}
                             <div>
                                 <label className="block text-sm font-bold text-brand-dark mb-3">What are you reporting? <span className="text-red-500">*</span></label>
                                 <div className="grid grid-cols-2 gap-4">
@@ -195,11 +258,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                 {errors.reportType && <p className="text-red-500 text-xs font-semibold mt-1.5">{errors.reportType}</p>}
                             </div>
 
-                            {/* Basic Details */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-bold text-brand-dark mb-1.5">Item Title <span className="text-red-500">*</span></label>
-                                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Black Leather Wallet" className={`w-full px-4 py-3 bg-white border ${errors.title ? 'border-red-500' : 'border-slate-300'} rounded-xl focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest text-brand-dark font-medium transition-all`} />
+                                    <div className="flex justify-between items-end mb-1.5">
+                                        <label className="block text-sm font-bold text-brand-dark">Item Title <span className="text-red-500">*</span></label>
+                                        <span className={`text-xs font-bold ${title.length > 16 ? 'text-red-500' : 'text-slate-400'}`}>{title.length}/16</span>
+                                    </div>
+                                    <input type="text" maxLength={16} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Sony Headphones" className={`w-full px-4 py-3 bg-white border ${errors.title ? 'border-red-500' : 'border-slate-300'} rounded-xl focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest text-brand-dark font-medium transition-all`} />
                                     {errors.title && <p className="text-red-500 text-xs font-semibold mt-1.5">{errors.title}</p>}
                                 </div>
 
@@ -207,10 +272,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                     <label className="block text-sm font-bold text-brand-dark mb-1.5">Category <span className="text-red-500">*</span></label>
                                     <select value={category} onChange={(e) => setCategory(e.target.value as ItemCategory)} className={`w-full px-4 py-3 bg-white border ${errors.category ? 'border-red-500' : 'border-slate-300'} rounded-xl focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest text-brand-dark font-medium transition-all`}>
                                         <option value="">Select Category</option>
-                                        <option value="ELECTRONICS">Electronics</option>
-                                        <option value="WALLET">Wallet & Purses</option>
-                                        <option value="DOCUMENTS">Documents & IDs</option>
+                                        <option value="ELECTRONICS">Electronics (Phones, Laptops)</option>
+                                        <option value="WALLET_PURSE">Wallet, Purse & Cash</option>
+                                        <option value="DOCUMENTS_ID">Documents & IDs</option>
                                         <option value="KEYS">Keys</option>
+                                        <option value="BAGS_LUGGAGE">Bags & Luggage</option>
+                                        <option value="JEWELRY_WATCHES">Jewelry & Watches</option>
+                                        <option value="CLOTHING_ACCESSORIES">Clothing & Accessories</option>
                                         <option value="PETS">Pets</option>
                                         <option value="OTHER">Other</option>
                                     </select>
@@ -218,45 +286,38 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                 </div>
 
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-bold text-brand-dark mb-1.5">Description <span className="text-red-500">*</span></label>
-                                    <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe the item clearly..." className={`w-full px-4 py-3 bg-white border ${errors.description ? 'border-red-500' : 'border-slate-300'} rounded-xl focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest text-brand-dark font-medium resize-none transition-all`} />
+                                    <div className="flex justify-between items-end mb-1.5">
+                                        <label className="block text-sm font-bold text-brand-dark">Description <span className="text-red-500">*</span></label>
+                                        <span className={`text-xs font-bold ${description.length > 250 ? 'text-red-500' : 'text-slate-400'}`}>{description.length}/250</span>
+                                    </div>
+                                    <textarea rows={3} maxLength={250} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe the item clearly..." className={`w-full px-4 py-3 bg-white border ${errors.description ? 'border-red-500' : 'border-slate-300'} rounded-xl focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest text-brand-dark font-medium resize-none transition-all`} />
                                     {errors.description && <p className="text-red-500 text-xs font-semibold mt-1.5">{errors.description}</p>}
                                 </div>
                             </div>
 
                             <hr className="border-slate-100" />
 
-                            {/* Address Section */}
                             <div>
                                 <h3 className="text-sm font-bold text-brand-dark mb-4">Location Details</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
                                     <div>
                                         <label className="block text-sm font-bold text-brand-dark mb-1.5">State <span className="text-red-500">*</span></label>
-                                        <select value={province} onChange={(e) => setProvince(e.target.value)} className={`w-full px-4 py-2.5 bg-white border ${errors.province ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}>
-                                            <option value="">Select Province</option>
-                                            <option value="Koshi">Koshi</option>
-                                            <option value="Madhesh">Madhesh</option>
-                                            <option value="Bagmati">Bagmati</option>
-                                            <option value="Gandaki">Gandaki</option>
-                                            <option value="Lumbini">Lumbini</option>
-                                            <option value="Karnali">Karnali</option>
-                                            <option value="Sudurpashchim">Sudurpashchim</option>
+                                        <select value={province} onChange={handleProvinceChange} className={`w-full px-4 py-2.5 bg-white border ${errors.province ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}>
+                                            <option value="" disabled>Select Province</option>
+                                            {Object.keys(NEPAL_LOCATIONS).map((prov) => (
+                                                <option key={prov} value={prov}>{prov}</option>
+                                            ))}
                                         </select>
                                         {errors.province && <p className="text-red-500 text-xs font-semibold mt-1">{errors.province}</p>}
                                     </div>
 
                                     <div>
                                         <label className="block text-sm font-bold text-brand-dark mb-1.5">District <span className="text-red-500">*</span></label>
-                                        <select value={district} onChange={(e) => setDistrict(e.target.value)} className={`w-full px-4 py-2.5 bg-white border ${errors.district ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}>
-                                            <option value="">Select District</option>
-                                            <option value="Kathmandu">Kathmandu</option>
-                                            <option value="Bhaktapur">Bhaktapur</option>
-                                            <option value="Lalitpur">Lalitpur</option>
-                                            <option value="Kaski">Kaski</option>
-                                            <option value="Morang">Morang</option>
-                                            <option value="Rupandehi">Rupandehi</option>
-                                            <option value="Chitwan">Chitwan</option>
-                                            <option value="Other">Other...</option>
+                                        <select value={district} onChange={(e) => { setDistrict(e.target.value); if (errors.district) setErrors(prev => ({ ...prev, district: '' })); }} disabled={!province} className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm transition-colors ${!province ? 'bg-slate-50 border-slate-200 cursor-not-allowed text-slate-400' : errors.district ? 'bg-white border-red-500' : 'bg-white border-slate-300'}`}>
+                                            <option value="" disabled>Select District</option>
+                                            {province && NEPAL_LOCATIONS[province].map((dist) => (
+                                                <option key={dist} value={dist}>{dist}</option>
+                                            ))}
                                         </select>
                                         {errors.district && <p className="text-red-500 text-xs font-semibold mt-1">{errors.district}</p>}
                                     </div>
@@ -275,11 +336,18 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
                             <hr className="border-slate-100" />
 
-                            {/* Photos */}
                             <div>
-                                <label className="block text-sm font-bold text-brand-dark mb-3">
-                                    Photos (Max 3) <span className="text-slate-400 font-normal text-xs ml-2">{images.length}/3 Uploaded</span>
+                                <label className="block text-sm font-bold text-brand-dark mb-2">
+                                    Photos (Max 3, up to 6MB each) <span className="text-red-500">*</span> <span className="text-slate-400 font-normal text-xs ml-2">{images.length}/3 Uploaded</span>
                                 </label>
+
+                                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2.5">
+                                    <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                    <p className="text-[13px] font-medium text-amber-800 leading-relaxed">
+                                        <strong>Privacy Warning:</strong> Please do not post photos containing sensitive personal information (e.g., Citizenship numbers, ID numbers, or banking details).
+                                    </p>
+                                </div>
+
                                 <div className="flex flex-wrap gap-4">
                                     {images.map((file, idx) => (
                                         <div key={idx} className="relative w-24 h-24 rounded-xl overflow-hidden border-2 border-brand-light shadow-sm group">
@@ -290,20 +358,23 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                         </div>
                                     ))}
                                     {images.length < 3 && (
-                                        <div onClick={() => fileInputRef.current?.click()} className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-brand-primary cursor-pointer hover:bg-brand-lightest hover:border-brand-primary transition-all">
+                                        <div onClick={() => fileInputRef.current?.click()} className={`w-24 h-24 rounded-xl border-2 border-dashed bg-slate-50 flex flex-col items-center justify-center cursor-pointer transition-all ${errors.images ? 'border-red-500 text-red-500 bg-red-50' : 'border-slate-300 text-brand-primary hover:bg-brand-lightest hover:border-brand-primary'}`}>
                                             <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                                            <span className="text-xs font-bold">Add</span>
+                                            <span className="text-xs font-bold">Add Photo</span>
                                         </div>
                                     )}
                                 </div>
-                                <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageSelect} />
+                                {errors.images && <p className="text-red-500 text-xs font-semibold mt-2">{errors.images}</p>}
+                                <input type="file" multiple accept="image/jpeg, image/png, image/webp" ref={fileInputRef} className="hidden" onChange={handleImageSelect} />
                             </div>
                         </>
-
                     ) : (
-
-                        /* --- OTP STEP --- */
                         <div className="py-8 flex flex-col items-center text-center animate-in fade-in slide-in-from-right-8 duration-300">
+                            {errors.general && (
+                                <div className="w-full mb-6 p-3 bg-red-50 border border-red-200 text-red-600 text-sm font-bold rounded-lg">
+                                    {errors.general}
+                                </div>
+                            )}
                             <div className="w-16 h-16 bg-brand-lightest text-brand-primary rounded-full flex items-center justify-center mb-6 shadow-inner">
                                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
                             </div>
@@ -329,12 +400,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                             </div>
                         </div>
                     )}
-
                 </div>
 
                 <div className="p-6 border-t border-brand-lightest bg-slate-50 flex justify-between items-center">
                     {step === 'OTP' ? (
-                        <button onClick={() => setStep('FORM')} disabled={isSubmitting} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:text-brand-dark hover:bg-slate-200 transition-colors">
+                        <button onClick={() => { setStep('FORM'); setErrors({}); }} disabled={isSubmitting} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:text-brand-dark hover:bg-slate-200 transition-colors">
                             Back to Edit
                         </button>
                     ) : (
@@ -360,7 +430,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                         </button>
                     )}
                 </div>
-
             </div>
         </div>
     );

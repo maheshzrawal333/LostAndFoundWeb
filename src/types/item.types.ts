@@ -1,5 +1,17 @@
 export type ItemType = 'LOST' | 'FOUND';
-export type ItemCategory = 'ELECTRONICS' | 'WALLET' | 'DOCUMENTS' | 'KEYS' | 'PETS' | 'OTHER';
+
+// Expanded and ranked by real-world frequency & importance
+export type ItemCategory =
+    | 'ELECTRONICS'          // Phones, Laptops, Tablets, Earbuds
+    | 'WALLET_PURSE'         // Wallets, Purses, Cash
+    | 'DOCUMENTS_ID'         // Passports, Citizenship, Licenses, Bank Cards
+    | 'KEYS'                 // Car Keys, House Keys
+    | 'BAGS_LUGGAGE'         // Backpacks, Suitcases, Briefcases
+    | 'JEWELRY_WATCHES'      // Rings, Watches, Necklaces
+    | 'CLOTHING_ACCESSORIES' // Jackets, Sunglasses, Umbrellas
+    | 'PETS'                 // Dogs, Cats, Birds
+    | 'OTHER';               // Catch-all
+
 export type ItemStatus = 'OPEN' | 'VERIFYING' | 'RESOLVED' | 'ARCHIVED';
 
 export interface GeoLocation {
@@ -15,12 +27,19 @@ export interface Item {
     type: ItemType;
     description: string;
     imageUrls?: string[];
-    location: GeoLocation;
+    createdAt: string;
+    location?: {
+        latitude: number;
+        longitude: number;
+        addressText: string;
+    };
+    addressText?: string;
     dateLostOrFound: string;
     status: ItemStatus;
     hasSecretDetail: boolean;
-    reportedByUserId: string;
-    createdAt: string;
+    secretVerificationQuestion?: string;
+    reportedByUserId?: string;
+    hasAlreadyClaimed?: boolean;
 }
 
 export interface CreateItemDTO {

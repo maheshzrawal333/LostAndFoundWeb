@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { Client } from '@stomp/stompjs';
+import SockJS from 'sockjs-client';
+import imageCompression from 'browser-image-compression';
 
 const API_BASE_URL = 'http://localhost:8081/api/v1';
 
@@ -37,8 +40,20 @@ interface Chat {
     time: string;
     unread: number;
     status: 'OPEN' | 'RESOLVED';
+    isPoster: boolean;
+    closureRequestedByMe: boolean;
+    closureRequestedByOther: boolean;
+    resolutionOtp: string | null;
     messages: Message[];
 }
+
+const ALLOWED_ATTACHMENT_TYPES = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'application/pdf'
+];
+const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024; // 6MB
 
 export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, currentUser }) => {
     const { token } = useAuth();
@@ -49,11 +64,18 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     const [isLoading, setIsLoading] = useState(true);
     const [isSending, setIsSending] = useState(false);
 
+    const [isResolvingUI, setIsResolvingUI] = useState(false);
+    const [resolveOtp, setResolveOtp] = useState('');
+    const [resolveError, setResolveError] = useState('');
+    const [isActionLoading, setIsActionLoading] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
     const [pendingFileUrl, setPendingFileUrl] = useState<string | null>(null);
+    const [fileError, setFileError] = useState<string>('');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const stompClientRef = useRef<Client | null>(null);
 
     const fetchChats = async () => {
         if (!token) return;
@@ -64,7 +86,6 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
             if (res.ok) {
                 const data: Chat[] = await res.json();
                 setLocalChats(data);
-                // On desktop, auto-select first chat. On mobile, keep it null so list shows.
                 if (data.length > 0 && !activeChatId && window.innerWidth >= 768) {
                     setActiveChatId(data[0].id);
                 }
@@ -77,6 +98,33 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     };
 
     useEffect(() => {
+        if (!isOpen || !token || !activeChatId) {
+            if (stompClientRef.current) {
+                stompClientRef.current.deactivate();
+                stompClientRef.current = null;
+            }
+            return;
+        }
+
+        const client = new Client({
+            webSocketFactory: () => new SockJS('http://localhost:8081/ws'),
+            connectHeaders: { Authorization: `Bearer ${token}` },
+            onConnect: () => {
+                client.subscribe(`/topic/chat/${activeChatId}`, () => {
+                    fetchChats();
+                });
+            }
+        });
+
+        client.activate();
+        stompClientRef.current = client;
+
+        return () => {
+            if (client) client.deactivate();
+        };
+    }, [isOpen, token, activeChatId]);
+
+    useEffect(() => {
         if (isOpen) {
             fetchChats();
         } else {
@@ -86,6 +134,9 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     }, [isOpen, token]);
 
     useEffect(() => {
+        setIsResolvingUI(false);
+        setResolveOtp('');
+        setResolveError('');
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [localChats, activeChatId]);
 
@@ -94,17 +145,33 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     const activeChat = localChats.find(c => c.id === activeChatId);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setFileError('');
         const file = e.target.files?.[0];
-        if (file) {
-            setPendingFile(file);
-            setPendingFileUrl(URL.createObjectURL(file));
+        if (!file) return;
+
+        // Validation 1: Format check
+        if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+            setFileError('Invalid file. Only JPG, PNG, WEBP, and PDF documents are supported.');
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
         }
+
+        // Validation 2: Size check (6MB limit)
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+            setFileError('Attachment exceeds the 6MB maximum limit.');
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+        }
+
+        setPendingFile(file);
+        setPendingFileUrl(file.type.startsWith('image/') ? URL.createObjectURL(file) : null);
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const removePendingFile = () => {
         setPendingFile(null);
         setPendingFileUrl(null);
+        setFileError('');
     };
 
     const sendMessage = async (e: React.FormEvent) => {
@@ -116,16 +183,40 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
 
         try {
             if (pendingFile) {
+                let fileToUpload: File = pendingFile;
+
+                // CONDITIONAL COMPRESSION: Only compress image files
+                if (pendingFile.type.startsWith('image/')) {
+                    const options = {
+                        maxSizeMB: 0.25, // Compress to ~250KB
+                        maxWidthOrHeight: 1200,
+                        useWebWorker: true,
+                        fileType: 'image/jpeg'
+                    };
+                    try {
+                        fileToUpload = await imageCompression(pendingFile, options);
+                    } catch (err) {
+                        console.warn("Could not compress chat image, uploading original.", err);
+                    }
+                }
+
                 const formData = new FormData();
-                formData.append('file', pendingFile);
+                formData.append('file', fileToUpload, pendingFile.name);
+
                 const fileRes = await fetch(`${API_BASE_URL}/files/upload`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` },
                     body: formData
                 });
+
                 if (fileRes.ok) {
                     const fileData = await fileRes.json();
                     uploadedAttachmentUrl = fileData.url;
+                } else {
+                    const errData = await fileRes.json().catch(() => ({}));
+                    setFileError(errData.message || 'Failed to upload attachment.');
+                    setIsSending(false);
+                    return;
                 }
             }
 
@@ -157,21 +248,33 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
         }
     };
 
-    const handleResolveChat = async () => {
+    const handleAction = async (endpoint: string, method: string = 'PATCH', body?: object) => {
         if (!activeChatId || !token) return;
+        setIsActionLoading(true);
+        setResolveError('');
         try {
-            const res = await fetch(`${API_BASE_URL}/chats/${activeChatId}/resolve`, {
-                method: 'PATCH',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) await fetchChats();
+            const options: RequestInit = {
+                method,
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+            };
+            if (body) options.body = JSON.stringify(body);
+
+            const res = await fetch(`${API_BASE_URL}/chats/${activeChatId}/${endpoint}`, options);
+            if (res.ok) {
+                if (endpoint === 'resolve') setIsResolvingUI(false);
+                await fetchChats();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                setResolveError(data.message || 'Action failed.');
+            }
         } catch (error) {
-            console.error("Failed to resolve chat", error);
+            setResolveError('Network error occurred.');
+        } finally {
+            setIsActionLoading(false);
         }
     };
 
     const getInitials = (name: string) => name ? name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : 'U';
-
     const formatTime = (isoString: string) => {
         if (!isoString) return '';
         return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -181,10 +284,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
         <div className="fixed inset-0 z-[130] flex items-center justify-center bg-brand-dark/70 backdrop-blur-sm p-0 md:p-8 animate-in fade-in duration-200">
             <div className="bg-white md:rounded-2xl shadow-2xl w-full h-full md:h-[85vh] md:max-w-6xl flex overflow-hidden border-0 md:border border-brand-lightest">
 
-                {/* --- LEFT PANEL: Chat List --- */}
-                {/* Hidden on mobile if a chat is active */}
                 <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] flex-col border-r border-slate-200 bg-slate-50 shrink-0`}>
-
                     <div className="bg-slate-950 p-4 flex justify-between items-center shrink-0 h-20 border-b border-slate-800">
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-brand-light font-bold overflow-hidden shadow-inner shrink-0">
@@ -199,7 +299,6 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                 <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{currentUser.name}</p>
                             </div>
                         </div>
-                        {/* Always visible close button for left panel */}
                         <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-2 rounded-full focus:outline-none shrink-0">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                         </button>
@@ -256,14 +355,11 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                     </div>
                 </div>
 
-                {/* --- RIGHT PANEL: Active Chat --- */}
-                {/* Hidden on mobile if NO chat is active */}
                 <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-white relative`}>
                     {activeChat ? (
                         <>
                             <div className="bg-white px-4 md:px-6 h-20 border-b border-slate-200 flex justify-between items-center shrink-0 shadow-sm z-10">
                                 <div className="flex items-center gap-3 md:gap-4">
-                                    {/* Mobile Back Button */}
                                     <button onClick={() => setActiveChatId(null)} className="md:hidden text-slate-500 hover:text-brand-dark p-2 -ml-2 rounded-full">
                                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>
                                     </button>
@@ -290,118 +386,238 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                 </div>
 
                                 <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-                                    {activeChat.status === 'OPEN' && (
-                                        <button
-                                            onClick={handleResolveChat}
-                                            className="text-[10px] sm:text-xs font-bold bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200 transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5"
-                                        >
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
-                                            <span className="hidden sm:inline">Mark Resolved</span>
-                                        </button>
+                                    {activeChat.status === 'OPEN' && !isResolvingUI && !activeChat.resolutionOtp && !activeChat.closureRequestedByMe && !activeChat.closureRequestedByOther && (
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => handleAction('request-close')}
+                                                disabled={isActionLoading}
+                                                className="text-[10px] sm:text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800 border border-slate-200 transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                <span className="hidden sm:inline">Not a Match</span>
+                                            </button>
+
+                                            {activeChat.isPoster ? (
+                                                <button
+                                                    onClick={() => handleAction('request-resolve-otp', 'POST')}
+                                                    disabled={isActionLoading}
+                                                    className="text-[10px] sm:text-xs font-bold bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200 transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                                    <span className="hidden sm:inline">Generate Code</span>
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => setIsResolvingUI(true)}
+                                                    disabled={isActionLoading}
+                                                    className="text-[10px] sm:text-xs font-bold bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200 transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                                    <span className="hidden sm:inline">Enter Code</span>
+                                                </button>
+                                            )}
+                                        </div>
                                     )}
-                                    {/* Right panel close button */}
-                                    <button onClick={onClose} className="text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0">
+
+                                    <button onClick={onClose} className="text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0 ml-1">
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     </button>
                                 </div>
                             </div>
 
-                            {activeChat.status === 'OPEN' && (
-                                <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-3 flex items-start gap-3 shrink-0">
-                                    <svg className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                    <div className="text-[10px] sm:text-xs font-medium text-amber-800 leading-relaxed">
-                                        <strong>Security Warning:</strong> Messages are NOT end-to-end encrypted and are monitored. Do not share financial information. <span className="font-bold underline hidden sm:inline">Communicating off-platform voids all system protections.</span>
+                            {activeChat.status === 'OPEN' && activeChat.closureRequestedByMe && (
+                                <div className="bg-slate-100 border-b border-slate-200 px-4 sm:px-6 py-3 flex justify-between items-center gap-3 shrink-0 shadow-inner">
+                                    <div className="flex items-center gap-2 text-[11px] sm:text-xs font-bold text-slate-600">
+                                        <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        Waiting for {activeChat.otherUser.split(' ')[0]} to confirm closure.
+                                    </div>
+                                    <button onClick={() => handleAction('cancel-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-white text-slate-500 border border-slate-300 hover:bg-slate-200 px-3 py-1.5 rounded-lg shadow-sm">Cancel Request</button>
+                                </div>
+                            )}
+
+                            {activeChat.status === 'OPEN' && activeChat.closureRequestedByOther && (
+                                <div className="bg-blue-50 border-b border-blue-200 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 shrink-0 shadow-inner animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="flex items-start gap-2 text-[11px] sm:text-xs font-bold text-blue-800">
+                                        <svg className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        {activeChat.otherUser.split(' ')[0]} wants to close this chat as 'Not a Match'. Do you agree?
+                                    </div>
+                                    <div className="flex gap-2 self-end sm:self-auto">
+                                        <button onClick={() => handleAction('cancel-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-white text-slate-600 border border-slate-300 hover:bg-slate-100 px-3 py-1.5 rounded-lg shadow-sm">Decline</button>
+                                        <button onClick={() => handleAction('approve-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 px-4 py-1.5 rounded-lg shadow-sm flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg> Approve Close</button>
                                     </div>
                                 </div>
                             )}
 
-                            <div className="flex-1 p-4 sm:p-6 overflow-y-auto flex flex-col gap-4 custom-scrollbar bg-slate-50">
-                                {activeChat.messages.map((msg) => (
-                                    <div key={msg.id} className={`flex flex-col ${msg.sender === 'system' ? 'items-center my-4' : msg.sender === 'me' ? 'items-end' : 'items-start'}`}>
-
-                                        {msg.sender === 'system' ? (
-                                            <div className="bg-slate-200 text-slate-600 text-[10px] sm:text-xs font-bold px-4 py-2 rounded-full border border-slate-300 flex items-center gap-2 text-center max-w-[90%]">
-                                                <svg className="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                {msg.text}
+                            {(isResolvingUI || activeChat.resolutionOtp) && activeChat.status === 'OPEN' ? (
+                                <div className="flex-1 p-6 flex flex-col items-center justify-center bg-slate-50 animate-in fade-in duration-300">
+                                    {activeChat.isPoster ? (
+                                        <>
+                                            <div className="w-16 h-16 bg-[#eff6ff] text-[#3b82f6] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#dbeafe]">
+                                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                                             </div>
-                                        ) : (
-                                            <>
-                                                <div className={`max-w-[85%] sm:max-w-[70%] px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl text-sm font-medium shadow-sm ${
-                                                    msg.sender === 'me'
-                                                        ? 'bg-brand-primary text-white rounded-tr-sm'
-                                                        : 'bg-white border border-slate-200 text-brand-dark rounded-tl-sm'
-                                                }`}>
-                                                    {msg.attachment && (
-                                                        <div className="mb-2 rounded-lg overflow-hidden border border-white/20 bg-black/5">
-                                                            {msg.attachment.type?.startsWith('image/') ? (
-                                                                <img src={msg.attachment.url} alt="Attachment" className="max-w-full h-auto max-h-48 object-cover rounded-lg" />
-                                                            ) : (
-                                                                <a href={msg.attachment.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 bg-white/10 rounded-lg hover:bg-white/20">
-                                                                    <svg className="w-8 h-8 shrink-0 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                                                                    <span className="text-xs font-bold truncate underline">{msg.attachment.name || 'Download File'}</span>
-                                                                </a>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    {msg.text && <div>{msg.text}</div>}
-                                                </div>
-                                                <span className="text-[10px] font-bold text-slate-400 mt-1 mx-1">{formatTime(msg.time)}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                ))}
-                                <div ref={messagesEndRef} />
-                            </div>
-
-                            {activeChat.status === 'RESOLVED' ? (
-                                <div className="p-4 bg-slate-100 border-t border-slate-200 shrink-0 text-center flex flex-col items-center justify-center gap-1">
-                                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chat Closed</p>
+                                            <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Share this Code</h3>
+                                            <p className="text-sm text-slate-500 font-medium mb-8 max-w-sm text-center">
+                                                Show this secure 6-digit code to the other user. They must enter it on their phone to verify the hand-off.
+                                            </p>
+                                            <div className="bg-white border-2 border-slate-200 px-8 py-5 rounded-2xl shadow-sm mb-8">
+                                                <span className="text-4xl tracking-[0.3em] font-mono font-extrabold text-brand-primary">{activeChat.resolutionOtp}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-8 animate-pulse">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                Waiting for {activeChat.otherUser.split(' ')[0]} to submit...
+                                            </div>
+                                            <button onClick={() => handleAction('cancel-resolve-otp')} disabled={isActionLoading} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 bg-slate-200 hover:bg-slate-300 transition-colors">
+                                                Back to Chat
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="w-16 h-16 bg-[#ecfdf5] text-[#10b981] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#d1fae5]">
+                                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                                            </div>
+                                            <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Finalize Resolution</h3>
+                                            <p className="text-sm text-slate-500 font-medium mb-8 max-w-sm text-center">
+                                                To securely confirm the exchange of this item, please enter the 6-digit code provided by the poster.
+                                            </p>
+                                            <div className="w-full max-w-xs">
+                                                <input
+                                                    type="text"
+                                                    maxLength={6}
+                                                    value={resolveOtp}
+                                                    onChange={(e) => setResolveOtp(e.target.value.replace(/\D/g, ''))}
+                                                    className={`w-full px-4 py-4 text-center text-2xl tracking-[0.5em] border rounded-xl focus:outline-none focus:ring-2 font-mono shadow-sm bg-white ${resolveError ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-green-500 focus:ring-green-100'}`}
+                                                    placeholder="------"
+                                                    disabled={isActionLoading}
+                                                />
+                                                {resolveError && <p className="text-red-500 text-xs font-semibold mt-2 text-center">{resolveError}</p>}
+                                            </div>
+                                            <div className="flex gap-3 mt-8">
+                                                <button
+                                                    onClick={() => { setIsResolvingUI(false); setResolveError(''); setResolveOtp(''); }}
+                                                    disabled={isActionLoading}
+                                                    className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 bg-slate-200 hover:bg-slate-300 transition-colors"
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    onClick={() => handleAction('resolve', 'PATCH', { otp: resolveOtp })}
+                                                    disabled={isActionLoading}
+                                                    className="px-8 py-2.5 rounded-xl text-sm font-bold bg-green-500 text-white shadow-md hover:bg-green-600 transition-all flex items-center justify-center min-w-[140px]"
+                                                >
+                                                    {isActionLoading ? <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : 'Verify & Resolve'}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             ) : (
-                                <div className="bg-white border-t border-slate-200 shrink-0 flex flex-col">
-                                    {pendingFile && (
-                                        <div className="px-4 pt-3 pb-1 flex items-center">
-                                            <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-3 pr-8 relative">
-                                                {pendingFile.type.startsWith('image/') && pendingFileUrl ? (
-                                                    <img src={pendingFileUrl} alt="Preview" className="w-10 h-10 object-cover rounded-md border border-slate-300" />
-                                                ) : (
-                                                    <div className="w-10 h-10 bg-slate-200 rounded-md flex items-center justify-center">
-                                                        <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
-                                                    </div>
-                                                )}
-                                                <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{pendingFile.name}</span>
-                                                <button type="button" onClick={removePendingFile} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm">
-                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                                </button>
+                                <>
+                                    {activeChat.status === 'OPEN' && (
+                                        <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-3 flex items-start gap-3 shrink-0">
+                                            <svg className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                            <div className="text-[10px] sm:text-xs font-medium text-amber-800 leading-relaxed">
+                                                <strong>Security Warning:</strong> Messages are NOT end-to-end encrypted and are monitored. Do not share financial information. <span className="font-bold underline hidden sm:inline">Communicating off-platform voids all system protections.</span>
                                             </div>
                                         </div>
                                     )}
 
-                                    <form onSubmit={sendMessage} className="p-3 sm:p-4 flex gap-2 sm:gap-3 items-end pb-safe">
-                                        <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,.pdf,.doc,.docx" />
-                                        <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 sm:p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-lightest rounded-full transition-colors focus:outline-none shrink-0 mb-0.5">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
-                                        </button>
-                                        <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary text-sm font-medium text-brand-dark resize-none min-h-[45px] sm:min-h-[50px] max-h-[100px] custom-scrollbar" rows={1} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(e); } }} />
-                                        <button type="submit" disabled={(!chatInput.trim() && !pendingFile) || isSending} className="w-11 h-11 sm:w-12 sm:h-12 bg-brand-primary text-white rounded-full flex items-center justify-center hover:bg-brand-dark transition-all shadow-md disabled:opacity-50 disabled:shadow-none focus:outline-none shrink-0 mb-0.5">
-                                            {isSending ? (
-                                                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                            ) : (
-                                                <svg className="w-5 h-5 -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                                    <div className="flex-1 p-4 sm:p-6 overflow-y-auto flex flex-col gap-4 custom-scrollbar bg-slate-50">
+                                        {activeChat.messages.map((msg) => (
+                                            <div key={msg.id} className={`flex flex-col ${msg.sender === 'system' ? 'items-center my-4' : msg.sender === 'me' ? 'items-end' : 'items-start'}`}>
+
+                                                {msg.sender === 'system' ? (
+                                                    <div className="bg-slate-200 text-slate-600 text-[10px] sm:text-xs font-bold px-4 py-2 rounded-full border border-slate-300 flex items-center gap-2 text-center max-w-[90%]">
+                                                        <svg className="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                        {msg.text}
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className={`max-w-[85%] sm:max-w-[70%] px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl text-sm font-medium shadow-sm ${
+                                                            msg.sender === 'me'
+                                                                ? 'bg-brand-primary text-white rounded-tr-sm'
+                                                                : 'bg-white border border-slate-200 text-brand-dark rounded-tl-sm'
+                                                        }`}>
+                                                            {msg.attachment && (
+                                                                <div className="mb-2 rounded-lg overflow-hidden border border-white/20 bg-black/5">
+                                                                    {msg.attachment.type?.startsWith('image/') ? (
+                                                                        <img src={msg.attachment.url} alt="Attachment" className="max-w-full h-auto max-h-48 object-cover rounded-lg" />
+                                                                    ) : (
+                                                                        <a href={msg.attachment.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 bg-white/10 rounded-lg hover:bg-white/20">
+                                                                            <svg className="w-8 h-8 shrink-0 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                                            <span className="text-xs font-bold truncate underline">{msg.attachment.name || 'Download PDF Document'}</span>
+                                                                        </a>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {msg.text && <div>{msg.text}</div>}
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-slate-400 mt-1 mx-1">{formatTime(msg.time)}</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        ))}
+                                        <div ref={messagesEndRef} />
+                                    </div>
+
+                                    {activeChat.status === 'RESOLVED' ? (
+                                        <div className="p-4 bg-slate-100 border-t border-slate-200 shrink-0 text-center flex flex-col items-center justify-center gap-1">
+                                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chat Closed</p>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-white border-t border-slate-200 shrink-0 flex flex-col">
+                                            {fileError && (
+                                                <div className="px-4 py-2 bg-red-50 text-red-600 text-xs font-bold border-b border-red-200">
+                                                    {fileError}
+                                                </div>
                                             )}
-                                        </button>
-                                    </form>
-                                </div>
+
+                                            {pendingFile && (
+                                                <div className="px-4 pt-3 pb-1 flex items-center">
+                                                    <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-3 pr-8 relative">
+                                                        {pendingFile.type.startsWith('image/') && pendingFileUrl ? (
+                                                            <img src={pendingFileUrl} alt="Preview" className="w-10 h-10 object-cover rounded-md border border-slate-300" />
+                                                        ) : (
+                                                            <div className="w-10 h-10 bg-slate-200 rounded-md flex items-center justify-center">
+                                                                <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                                            </div>
+                                                        )}
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{pendingFile.name}</span>
+                                                            <span className="text-[10px] text-slate-400">{(pendingFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                                                        </div>
+                                                        <button type="button" onClick={removePendingFile} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm">
+                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <form onSubmit={sendMessage} className="p-3 sm:p-4 flex gap-2 sm:gap-3 items-end pb-safe">
+                                                <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileSelect} accept="image/jpeg, image/png, image/webp, application/pdf" />
+                                                <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 sm:p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-lightest rounded-full transition-colors focus:outline-none shrink-0 mb-0.5" disabled={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther}>
+                                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                                </button>
+                                                <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther ? "Chat paused pending closure confirmation..." : "Type a message..."} disabled={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther} className="flex-1 px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary text-sm font-medium text-brand-dark resize-none min-h-[45px] sm:min-h-[50px] max-h-[100px] custom-scrollbar disabled:opacity-60" rows={1} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(e); } }} />
+                                                <button type="submit" disabled={(!chatInput.trim() && !pendingFile) || isSending || activeChat.closureRequestedByMe || activeChat.closureRequestedByOther} className="w-11 h-11 sm:w-12 sm:h-12 bg-brand-primary text-white rounded-full flex items-center justify-center hover:bg-brand-dark transition-all shadow-md disabled:opacity-50 disabled:shadow-none focus:outline-none shrink-0 mb-0.5">
+                                                    {isSending ? (
+                                                        <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                    ) : (
+                                                        <svg className="w-5 h-5 -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                                                    )}
+                                                </button>
+                                            </form>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </>
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-slate-400 relative">
-                            {/* Optional close button for desktop when no chat is open */}
                             <button onClick={onClose} className="absolute top-6 right-6 text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0 hidden md:block">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
-                            <svg className="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                            <svg className="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03-8-9-8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
                             <p className="font-medium">Select a conversation to view messages</p>
                         </div>
                     )}

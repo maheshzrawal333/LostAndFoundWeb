@@ -4,6 +4,12 @@ interface User {
     id: string;
     email: string;
     role: 'USER' | 'ADMIN';
+    // NEW: Added the missing fields required for Account Settings
+    name?: string;
+    phone?: string;
+    province?: string;
+    district?: string;
+    avatarUrl?: string;
 }
 
 interface AuthContextType {
@@ -12,6 +18,8 @@ interface AuthContextType {
     login: (token: string, user: User) => void;
     logout: () => void;
     isAuthenticated: boolean;
+    // NEW: A way to update just the user profile without requiring a new token
+    updateUser: (updatedUser: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,8 +51,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
     };
 
+    const updateUser = (updatedUser: Partial<User>) => {
+        if (user) {
+            const newUser = { ...user, ...updatedUser };
+            setUser(newUser);
+            localStorage.setItem('auth_user', JSON.stringify(newUser));
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+        <AuthContext.Provider value={{ user, token, login, logout, updateUser, isAuthenticated: !!token }}>
             {children}
         </AuthContext.Provider>
     );

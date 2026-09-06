@@ -81,16 +81,19 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, page })
             body: (
                 <div className="space-y-5 text-slate-600 text-sm leading-relaxed">
                     <p><strong>Effective Date:</strong> September 2026</p>
-                    <p>Lost And Found Nepal ("we," "our," or "us") is committed to protecting your personal data in accordance with the privacy laws of Nepal. This policy outlines how we handle your information.</p>
+                    <p>Lost And Found Nepal ("we," "our," or "us") is committed to protecting your personal data in accordance with the privacy laws of Nepal. This policy outlines how we handle your information to ensure a safe environment.</p>
 
                     <h4 className="font-bold text-brand-dark text-base pt-2">1. Information We Collect</h4>
-                    <p>We collect essential data required to operate a secure platform, including your full name, verified mobile phone number, email address, and optional location data (Province/District). We also collect item images and chat logs.</p>
+                    <p>We collect essential data required to operate a secure platform, including your full name, verified mobile phone number, email address, and general location data (Province/District). We also collect item images and chat logs.</p>
 
-                    <h4 className="font-bold text-brand-dark text-base pt-2">2. How We Use Your Data</h4>
-                    <p>Your phone number is used strictly for Multi-Factor Authentication (OTP) to prevent fraud. We do not use your phone number for marketing. Chat logs are actively monitored by automated systems and human administrators solely for dispute resolution and safety enforcement.</p>
+                    <h4 className="font-bold text-brand-dark text-base pt-2">2. Trust & Safety Tracking (Fraud Prevention)</h4>
+                    <p>To protect our community from scams and coordinate dispute resolution, we collect <strong className="text-brand-dark">Silent Data</strong> (your IP address and device User-Agent) whenever you interact with the platform. When initiating a claim, we may request your exact <strong className="text-brand-dark">GPS Coordinates</strong> via your browser; this is collected only with your explicit on-screen consent.</p>
 
-                    <h4 className="font-bold text-brand-dark text-base pt-2">3. Data Sharing & Security</h4>
-                    <p>We do not sell, rent, or trade your personal information to third parties. Data may be shared with local law enforcement agencies in Nepal only if legally mandated or if there is a credible threat to user safety.</p>
+                    <h4 className="font-bold text-brand-dark text-base pt-2">3. How We Use Your Data</h4>
+                    <p>Your phone number is used strictly for Multi-Factor Authentication (OTP) to prevent fraud. We do not use your phone number for marketing. Chat logs and tracking data are actively monitored by automated systems and human administrators solely for dispute resolution and safety enforcement.</p>
+
+                    <h4 className="font-bold text-brand-dark text-base pt-2">4. Data Sharing & Security</h4>
+                    <p>We do not sell, rent, or trade your personal information to third parties. Data (including IP addresses and GPS locations) may be shared with local law enforcement agencies in Nepal if legally mandated, or if there is a credible threat to user safety or suspected theft.</p>
                 </div>
             )
         },
@@ -102,7 +105,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, page })
                     <p>By accessing and using Lost And Found Nepal, you agree to comply with these Terms of Service. Please read them carefully.</p>
 
                     <h4 className="font-bold text-brand-dark text-base pt-2">1. User Conduct & Fraud Prevention</h4>
-                    <p>You agree to provide accurate, truthful information when reporting or claiming items. Submitting false claims, attempting to extort rewards, or using the platform for illegal activities will result in an immediate, permanent ban and potential reporting to local authorities.</p>
+                    <p>You agree to provide accurate, truthful information when reporting or claiming items. Submitting false claims, attempting to extort rewards, or using the platform for illegal activities will result in an immediate, permanent ban and all collected tracking data (IP/Device/Location) will be handed over to the Nepal Police.</p>
 
                     <h4 className="font-bold text-brand-dark text-base pt-2">2. Platform Liability Exemption</h4>
                     <p>Lost And Found Nepal serves solely as an informational conduit to connect individuals. We do not verify the physical authenticity of items and are <strong>not liable</strong> for any loss, damage, theft, or injury that occurs during offline handovers. Users assume all risks associated with physical meetings.</p>
@@ -145,7 +148,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, page })
 
                 {/* Footer */}
                 <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end shrink-0">
-                    <button onClick={onClose} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-dark text-white hover:bg-brand-primary transition-colors shadow-md">
+                    <button onClick={onClose} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-dark text-white hover:bg-brand-primary transition-colors shadow-md focus:outline-none">
                         Understood
                     </button>
                 </div>
