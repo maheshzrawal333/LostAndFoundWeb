@@ -15,12 +15,19 @@ export interface Item {
     type: ItemType;
     description: string;
     imageUrls?: string[];
-    location: GeoLocation;
-    dateLostOrFound: string;
-    status: ItemStatus;
-    hasSecretDetail: boolean;
-    reportedByUserId: string;
     createdAt: string;
+    location?: {
+        latitude: number;
+        longitude: number;
+        addressText: string;
+    };
+    addressText?: string;
+    dateLostOrFound: string;
+    status: 'OPEN' | 'VERIFYING' | 'RESOLVED' | 'ARCHIVED';
+    hasSecretDetail: boolean;
+    secretVerificationQuestion?: string;
+    reportedByUserId?: string;
+    hasAlreadyClaimed?: boolean;
 }
 
 export interface CreateItemDTO {

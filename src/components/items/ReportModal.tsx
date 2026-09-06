@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ItemType, ItemCategory } from '../../types/item.types';
 import { useAuth } from '../../context/AuthContext';
+import { NEPAL_LOCATIONS } from '../../constants/nepalLocations';
 
 const API_BASE_URL = 'http://localhost:8081/api/v1';
 
@@ -41,12 +42,29 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
             const selectedFiles = Array.from(e.target.files);
             const availableSlots = 3 - images.length;
             const filesToAdd = selectedFiles.slice(0, availableSlots);
-            setImages((prev) => [...prev, ...filesToAdd]);
+
+            setImages((prev) => {
+                const newImages = [...prev, ...filesToAdd];
+                // Clear the image error in real-time as soon as one is uploaded
+                if (newImages.length > 0 && errors.images) {
+                    setErrors(prevErrs => ({ ...prevErrs, images: '' }));
+                }
+                return newImages;
+            });
         }
     };
 
     const removeImage = (indexToRemove: number) => {
         setImages(images.filter((_, index) => index !== indexToRemove));
+    };
+
+    // --- Dynamic Location Handlers ---
+    const handleProvinceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setProvince(e.target.value);
+        setDistrict(''); // Reset district automatically when province changes
+        if (errors.province) {
+            setErrors(prev => ({ ...prev, province: '' }));
+        }
     };
 
     const validateForm = () => {
@@ -57,6 +75,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
         if (!description.trim()) newErrors.description = 'Description is required.';
         if (!province) newErrors.province = 'State/Province is required.';
         if (!district) newErrors.district = 'District is required.';
+
+        // SECURITY/VALIDATION FIX: Compulsory Image
+        if (images.length === 0) newErrors.images = 'At least one photo is required.';
 
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
@@ -105,7 +126,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
         try {
             const imageUrls = await uploadImages();
-            const addressText = [ward, municipality, district, province].filter(Boolean).join(', ');
+
+            // Cleanly format the address string for the backend
+            const addressParts = [];
+            if (ward) addressParts.push(`Ward ${ward}`);
+            if (municipality) addressParts.push(municipality);
+            if (district) addressParts.push(district);
+            if (province) addressParts.push(province);
+            const addressText = addressParts.join(', ');
 
             const payload = {
                 title,
@@ -232,31 +260,34 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
                                     <div>
                                         <label className="block text-sm font-bold text-brand-dark mb-1.5">State <span className="text-red-500">*</span></label>
-                                        <select value={province} onChange={(e) => setProvince(e.target.value)} className={`w-full px-4 py-2.5 bg-white border ${errors.province ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}>
-                                            <option value="">Select Province</option>
-                                            <option value="Koshi">Koshi</option>
-                                            <option value="Madhesh">Madhesh</option>
-                                            <option value="Bagmati">Bagmati</option>
-                                            <option value="Gandaki">Gandaki</option>
-                                            <option value="Lumbini">Lumbini</option>
-                                            <option value="Karnali">Karnali</option>
-                                            <option value="Sudurpashchim">Sudurpashchim</option>
+                                        <select
+                                            value={province}
+                                            onChange={handleProvinceChange}
+                                            className={`w-full px-4 py-2.5 bg-white border ${errors.province ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}
+                                        >
+                                            <option value="" disabled>Select Province</option>
+                                            {Object.keys(NEPAL_LOCATIONS).map((prov) => (
+                                                <option key={prov} value={prov}>{prov}</option>
+                                            ))}
                                         </select>
                                         {errors.province && <p className="text-red-500 text-xs font-semibold mt-1">{errors.province}</p>}
                                     </div>
 
                                     <div>
                                         <label className="block text-sm font-bold text-brand-dark mb-1.5">District <span className="text-red-500">*</span></label>
-                                        <select value={district} onChange={(e) => setDistrict(e.target.value)} className={`w-full px-4 py-2.5 bg-white border ${errors.district ? 'border-red-500' : 'border-slate-300'} rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm`}>
-                                            <option value="">Select District</option>
-                                            <option value="Kathmandu">Kathmandu</option>
-                                            <option value="Bhaktapur">Bhaktapur</option>
-                                            <option value="Lalitpur">Lalitpur</option>
-                                            <option value="Kaski">Kaski</option>
-                                            <option value="Morang">Morang</option>
-                                            <option value="Rupandehi">Rupandehi</option>
-                                            <option value="Chitwan">Chitwan</option>
-                                            <option value="Other">Other...</option>
+                                        <select
+                                            value={district}
+                                            onChange={(e) => {
+                                                setDistrict(e.target.value);
+                                                if (errors.district) setErrors(prev => ({ ...prev, district: '' }));
+                                            }}
+                                            disabled={!province}
+                                            className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary text-brand-dark font-medium text-sm transition-colors ${!province ? 'bg-slate-50 border-slate-200 cursor-not-allowed text-slate-400' : errors.district ? 'bg-white border-red-500' : 'bg-white border-slate-300'}`}
+                                        >
+                                            <option value="" disabled>Select District</option>
+                                            {province && NEPAL_LOCATIONS[province].map((dist) => (
+                                                <option key={dist} value={dist}>{dist}</option>
+                                            ))}
                                         </select>
                                         {errors.district && <p className="text-red-500 text-xs font-semibold mt-1">{errors.district}</p>}
                                     </div>
@@ -278,7 +309,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                             {/* Photos */}
                             <div>
                                 <label className="block text-sm font-bold text-brand-dark mb-3">
-                                    Photos (Max 3) <span className="text-slate-400 font-normal text-xs ml-2">{images.length}/3 Uploaded</span>
+                                    Photos (Max 3) <span className="text-red-500">*</span> <span className="text-slate-400 font-normal text-xs ml-2">{images.length}/3 Uploaded</span>
                                 </label>
                                 <div className="flex flex-wrap gap-4">
                                     {images.map((file, idx) => (
@@ -290,12 +321,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                         </div>
                                     ))}
                                     {images.length < 3 && (
-                                        <div onClick={() => fileInputRef.current?.click()} className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-brand-primary cursor-pointer hover:bg-brand-lightest hover:border-brand-primary transition-all">
+                                        <div onClick={() => fileInputRef.current?.click()} className={`w-24 h-24 rounded-xl border-2 border-dashed bg-slate-50 flex flex-col items-center justify-center cursor-pointer transition-all ${errors.images ? 'border-red-500 text-red-500 bg-red-50' : 'border-slate-300 text-brand-primary hover:bg-brand-lightest hover:border-brand-primary'}`}>
                                             <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                                             <span className="text-xs font-bold">Add</span>
                                         </div>
                                     )}
                                 </div>
+                                {errors.images && <p className="text-red-500 text-xs font-semibold mt-2">{errors.images}</p>}
                                 <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageSelect} />
                             </div>
                         </>

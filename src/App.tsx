@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Item, ItemType } from './types/item.types';
+import { Item } from './types/item.types';
 import { ItemCard } from './components/items/ItemCard';
 import { ReportModal } from './components/items/ReportModal';
 import { LoginDrawer } from './components/layout/LoginDrawer';
@@ -7,25 +7,29 @@ import { ClaimModal } from './components/items/ClaimModal';
 import { MessagesInbox } from './components/chat/MessagesInbox';
 import { LegalModal, LegalPageType } from './components/legal/LegalModal';
 import { FeedbackModal } from './components/layout/FeedbackModal';
-import { useAuth } from './context/AuthContext'; // Adjust path if necessary
+import { useAuth } from './context/AuthContext';
+import { ItemDetailsModal } from './components/items/ItemDetailsModal';
 
 const API_BASE_URL = 'http://localhost:8081/api/v1';
 
 export const App: React.FC = () => {
-  const { token, isAuthenticated, logout } = useAuth();
+  // Re-added 'user' here so we can filter by 'user.id'
+  const { user, token, isAuthenticated, logout } = useAuth();
 
   const [items, setItems] = useState<Item[]>([]);
   const [isLoadingItems, setIsLoadingItems] = useState(true);
 
-  const [filterType, setFilterType] = useState<ItemType | 'ALL'>('ALL');
+  // Advanced View Modes
+  const [viewMode, setViewMode] = useState<'ALL' | 'LOST' | 'FOUND' | 'MY_POSTS' | 'RESOLVED'>('ALL');
+
   const [searchQuery, setSearchQuery] = useState('');
   const [locationQuery, setLocationQuery] = useState('');
 
-  // User Profile State (Fetched from backend)
+  // User Profile State
   const [userProfile, setUserProfile] = useState({
     name: '',
     email: '',
-    phone: '+977 98XXXXX123', // Still mocked as locked for security demonstration
+    phone: '+977 98XXXXX123',
     province: '',
     district: '',
     avatarUrl: ''
@@ -41,7 +45,6 @@ export const App: React.FC = () => {
   const [legalPageOpen, setLegalPageOpen] = useState<LegalPageType | null>(null);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
 
-  // Profile Form State
   const [draftProfile, setDraftProfile] = useState(userProfile);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
@@ -49,14 +52,15 @@ export const App: React.FC = () => {
   const [otpError, setOtpError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- API Integrations ---
+  const [selectedItemForDetails, setSelectedItemForDetails] = useState<Item | null>(null);
 
-  // 1. Fetch Items dynamically based on filters
+  // --- API Integrations ---
   const fetchItems = async () => {
     setIsLoadingItems(true);
     try {
       const params = new URLSearchParams();
-      if (filterType !== 'ALL') params.append('type', filterType);
+      // Only send Type parameters if we are in Lost or Found mode
+      if (viewMode === 'LOST' || viewMode === 'FOUND') params.append('type', viewMode);
       if (searchQuery.trim()) params.append('search', searchQuery.trim());
       if (locationQuery.trim()) params.append('location', locationQuery.trim());
 
@@ -72,12 +76,10 @@ export const App: React.FC = () => {
     }
   };
 
-  // Fetch items on initial load and when the Type tab changes
   useEffect(() => {
     fetchItems();
-  }, [filterType]);
+  }, [viewMode]);
 
-  // 2. Fetch User Profile on Login
   useEffect(() => {
     if (isAuthenticated && token) {
       fetch(`${API_BASE_URL}/users/me`, {
@@ -89,7 +91,7 @@ export const App: React.FC = () => {
               const loadedProfile = {
                 name: data.name || '',
                 email: data.email || '',
-                phone: '+977 98XXXXX123',
+                phone: data.phone || '+977 98XXXXX123',
                 province: data.province || '',
                 district: data.district || '',
                 avatarUrl: data.avatarUrl || ''
@@ -101,7 +103,6 @@ export const App: React.FC = () => {
     }
   }, [isAuthenticated, token]);
 
-  // Sync draft profile when modal opens
   useEffect(() => {
     if (isProfileModalOpen) {
       setDraftProfile(userProfile);
@@ -111,8 +112,26 @@ export const App: React.FC = () => {
     }
   }, [isProfileModalOpen, userProfile]);
 
-  // --- Handlers ---
+  // --- FRONTEND FILTERING LOGIC ---
+  const displayedItems = items.filter((item) => {
+    // 1. Success Stories Tab
+    if (viewMode === 'RESOLVED') return item.status === 'RESOLVED';
 
+    // 2. My Posts Tab
+    if (viewMode === 'MY_POSTS') return user && item.reportedByUserId === user.id;
+
+    // 3. Active Grid (ALL, LOST, FOUND) -> Remove RESOLVED items automatically!
+    if (item.status === 'RESOLVED') return false;
+
+    // The backend already filters LOST/FOUND, but we double-check here
+    if (viewMode === 'LOST') return item.type === 'LOST';
+    if (viewMode === 'FOUND') return item.type === 'FOUND';
+
+    return true;
+  });
+
+
+  // --- Handlers ---
   const requireAuth = (action: () => void) => {
     if (isAuthenticated) action();
     else setIsLoginDrawerOpen(true);
@@ -120,6 +139,7 @@ export const App: React.FC = () => {
 
   const handleLogoutConfirm = () => {
     logout();
+    setViewMode('ALL'); // Reset view on logout
     setIsLogoutModalOpen(false);
     setIsProfileModalOpen(false);
   };
@@ -167,9 +187,7 @@ export const App: React.FC = () => {
 
   const handleInitiateSave = async () => {
     const hasSensitiveChanges = draftProfile.email !== userProfile.email;
-
     setIsSavingProfile(true);
-
     if (hasSensitiveChanges) {
       setTimeout(() => {
         setIsVerifyingEmail(true);
@@ -186,13 +204,10 @@ export const App: React.FC = () => {
       setOtpError('Please enter a valid 6-digit code.');
       return;
     }
-
     setIsSavingProfile(true);
     setOtpError('');
-
     await new Promise(resolve => setTimeout(resolve, 1200));
-
-    if (emailOtp === '123456') { // Mock verification
+    if (emailOtp === '123456') {
       await saveProfileToBackend(draftProfile);
       setIsSavingProfile(false);
     } else {
@@ -203,6 +218,19 @@ export const App: React.FC = () => {
 
   const getInitials = (name: string) => name ? name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : 'U';
 
+  // Dynamic Headers based on View Mode
+  const getHeaderTitle = () => {
+    if (viewMode === 'RESOLVED') return "Success Stories.";
+    if (viewMode === 'MY_POSTS') return "Manage Your Posts.";
+    return "Recover what matters.";
+  };
+
+  const getHeaderSubtitle = () => {
+    if (viewMode === 'RESOLVED') return "Items that have been successfully returned to their rightful owners.";
+    if (viewMode === 'MY_POSTS') return "View and track the status of items you have reported.";
+    return "Search our secure database to find your lost belongings or help someone recover theirs.";
+  };
+
   return (
       <div className="min-h-screen flex flex-col bg-background text-brand-dark selection:bg-brand-lightest selection:text-brand-dark">
 
@@ -210,7 +238,7 @@ export const App: React.FC = () => {
         <header className="sticky top-0 z-50 w-full bg-slate-950 border-b border-slate-800 shadow-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
 
-            <div className="flex items-center gap-2 sm:gap-3 cursor-pointer shrink-0" onClick={() => { setFilterType('ALL'); fetchItems(); }}>
+            <div className="flex items-center gap-2 sm:gap-3 cursor-pointer shrink-0" onClick={() => setViewMode('ALL')}>
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-brand-primary rounded-lg sm:rounded-xl flex items-center justify-center shadow-lg shadow-brand-primary/20">
                 <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
               </div>
@@ -236,7 +264,6 @@ export const App: React.FC = () => {
                         className="relative p-2 text-slate-400 hover:text-white transition-colors focus:outline-none"
                     >
                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 border-2 border-slate-950 rounded-full"></span>
                     </button>
 
                     <div
@@ -272,95 +299,127 @@ export const App: React.FC = () => {
         {/* --- MAIN CONTENT --- */}
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 w-full">
 
-          <div className="mb-8 sm:mb-10 max-w-2xl mx-auto text-center px-2">
+          {/* Dynamic Header Texts */}
+          <div className="mb-8 sm:mb-10 max-w-2xl mx-auto text-center px-2 animate-in fade-in duration-300">
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-brand-dark mb-3 sm:mb-4 leading-tight">
-              Recover what matters.
+              {getHeaderTitle()}
             </h1>
             <p className="text-base sm:text-lg text-slate-500 font-medium">
-              Search our secure database to find your lost belongings or help someone recover theirs.
+              {getHeaderSubtitle()}
             </p>
           </div>
 
           <div className="flex flex-col items-center gap-6 mb-10 sm:mb-12 w-full">
 
-            <div className="flex bg-slate-100 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl w-full max-w-md sm:w-fit border border-slate-200">
-              {(['ALL', 'LOST', 'FOUND'] as const).map((type) => (
+            {/* The Professional Navigation Tabs */}
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl w-full max-w-full overflow-x-auto border border-slate-200 custom-scrollbar shadow-inner">
+              {(['ALL', 'LOST', 'FOUND', 'MY_POSTS', 'RESOLVED'] as const).map((mode) => (
                   <button
-                      key={type}
-                      onClick={() => setFilterType(type)}
-                      className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all duration-300 flex items-center justify-center gap-1.5 sm:gap-2 ${
-                          filterType === type
-                              ? type === 'LOST'
+                      key={mode}
+                      onClick={() => {
+                        if (mode === 'MY_POSTS' && !isAuthenticated) {
+                          setIsLoginDrawerOpen(true);
+                          return;
+                        }
+                        setViewMode(mode);
+                      }}
+                      className={`flex-1 min-w-[100px] sm:min-w-[120px] px-3 sm:px-6 py-3 text-[11px] sm:text-sm font-bold rounded-xl transition-all duration-300 flex items-center justify-center gap-2 whitespace-nowrap ${
+                          viewMode === mode
+                              ? mode === 'LOST'
                                   ? 'bg-red-500 text-white shadow-md shadow-red-500/25'
-                                  : type === 'FOUND'
+                                  : mode === 'FOUND'
                                       ? 'bg-brand-primary text-white shadow-md shadow-brand-primary/25'
-                                      : 'bg-white text-brand-dark shadow-md'
+                                      : mode === 'RESOLVED'
+                                          ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/25'
+                                          : 'bg-white text-brand-dark shadow-md border border-slate-200/50'
                               : 'text-slate-500 hover:text-brand-dark hover:bg-slate-200/50'
                       }`}
                   >
-                    {type === 'ALL' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>}
-                    {type === 'LOST' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>}
-                    {type === 'FOUND' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>}
-                    {type === 'ALL' ? 'View All' : type === 'LOST' ? 'Lost Items' : 'Found Items'}
+                    {mode === 'ALL' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>}
+                    {mode === 'LOST' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>}
+                    {mode === 'FOUND' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>}
+                    {mode === 'MY_POSTS' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>}
+                    {mode === 'RESOLVED' && <svg className="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>}
+
+                    {mode === 'ALL' ? 'Active Items' : mode === 'LOST' ? 'Lost' : mode === 'FOUND' ? 'Found' : mode === 'MY_POSTS' ? 'My Posts' : 'Resolved'}
                   </button>
               ))}
             </div>
 
-            <div className="bg-white p-2 rounded-2xl md:rounded-full shadow-lg shadow-slate-200/50 border border-slate-200 flex flex-col md:flex-row items-center gap-2 md:gap-0 w-full max-w-4xl">
-              <div className="flex-1 flex items-center px-4 py-2 w-full group">
-                <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                <div className="ml-3 w-full text-left">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">What are you looking for?</label>
-                  <input
-                      type="text"
-                      placeholder="e.g. Wallet, Sony, Keys..."
-                      className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && fetchItems()}
-                  />
+            {/* Search Bar - Hide on "My Posts" and "Resolved" to keep it clean */}
+            {(viewMode === 'ALL' || viewMode === 'LOST' || viewMode === 'FOUND') && (
+                <div className="bg-white p-2 rounded-2xl md:rounded-full shadow-lg shadow-slate-200/50 border border-slate-200 flex flex-col md:flex-row items-center gap-2 md:gap-0 w-full max-w-4xl animate-in slide-in-from-top-4 duration-300">
+                  <div className="flex-1 flex items-center px-4 py-2 w-full group">
+                    <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    <div className="ml-3 w-full text-left">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">What are you looking for?</label>
+                      <input
+                          type="text"
+                          placeholder="e.g. Wallet, Sony, Keys..."
+                          className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && fetchItems()}
+                      />
+                    </div>
+                  </div>
+                  <div className="hidden md:block w-px h-12 bg-slate-200 shrink-0 mx-2"></div>
+                  <div className="flex-1 flex items-center px-4 py-2 w-full group border-t border-slate-100 md:border-none">
+                    <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <div className="ml-3 w-full text-left">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Where?</label>
+                      <input
+                          type="text"
+                          placeholder="e.g. Kathmandu, Bus Park..."
+                          className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base"
+                          value={locationQuery}
+                          onChange={(e) => setLocationQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && fetchItems()}
+                      />
+                    </div>
+                  </div>
+                  <button onClick={fetchItems} className="w-full md:w-auto bg-brand-primary text-white px-8 py-3.5 sm:py-4 rounded-xl md:rounded-full font-bold hover:bg-brand-dark transition-colors shadow-md shadow-brand-primary/30 mt-2 md:mt-0 flex items-center justify-center shrink-0">
+                    <span className="md:hidden mr-2">Search Items</span>
+                    <svg className="w-5 h-5 hidden md:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                  </button>
                 </div>
-              </div>
-              <div className="hidden md:block w-px h-12 bg-slate-200 shrink-0 mx-2"></div>
-              <div className="flex-1 flex items-center px-4 py-2 w-full group border-t border-slate-100 md:border-none">
-                <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                <div className="ml-3 w-full text-left">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Where?</label>
-                  <input
-                      type="text"
-                      placeholder="e.g. Kathmandu, Bus Park..."
-                      className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base"
-                      value={locationQuery}
-                      onChange={(e) => setLocationQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && fetchItems()}
-                  />
-                </div>
-              </div>
-              <button onClick={fetchItems} className="w-full md:w-auto bg-brand-primary text-white px-8 py-3.5 sm:py-4 rounded-xl md:rounded-full font-bold hover:bg-brand-dark transition-colors shadow-md shadow-brand-primary/30 mt-2 md:mt-0 flex items-center justify-center shrink-0">
-                <span className="md:hidden mr-2">Search Items</span>
-                <svg className="w-5 h-5 hidden md:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-              </button>
-            </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap justify-center gap-6 sm:gap-8 max-w-7xl mx-auto min-h-[50vh] transition-all duration-300 ease-in-out">
+          {/* Core Grid */}
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-8 max-w-7xl mx-auto min-h-[50vh] transition-all duration-300">
             {isLoadingItems ? (
                 <div className="w-full py-20 flex justify-center">
                   <svg className="animate-spin h-10 w-10 text-brand-primary" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                 </div>
-            ) : items.length > 0 ? (
-                items.map((item) => (
-                    <div key={item.id} className="w-full sm:max-w-sm sm:w-[320px]">
-                      <ItemCard item={item} onClaimClick={(it) => requireAuth(() => setSelectedItemForClaim(it))} />
+            ) : displayedItems.length > 0 ? (
+                displayedItems.map((item) => (
+                    <div key={item.id} className="w-full sm:max-w-sm sm:w-[320px] animate-in fade-in zoom-in-95 duration-300">
+                      <ItemCard
+                          item={item}
+                          onClaimClick={(it) => requireAuth(() => setSelectedItemForClaim(it))}
+                          onViewDetails={(it) => setSelectedItemForDetails(it)}
+                          onOpenInbox={() => requireAuth(() => setIsMessagesInboxOpen(true))}
+                      />
                     </div>
                 ))
             ) : (
-                <div className="w-full py-16 sm:py-20 flex flex-col items-center justify-center text-center px-4">
+                <div className="w-full py-16 sm:py-20 flex flex-col items-center justify-center text-center px-4 animate-in fade-in duration-300">
                   <div className="w-16 h-16 sm:w-20 sm:h-20 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mb-4">
-                    <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    {viewMode === 'RESOLVED' ? (
+                        <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M5 13l4 4L19 7"></path></svg>
+                    ) : viewMode === 'MY_POSTS' ? (
+                        <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    ) : (
+                        <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    )}
                   </div>
-                  <h3 className="text-lg sm:text-xl font-bold text-brand-dark mb-2">No items found</h3>
-                  <p className="text-sm sm:text-base text-slate-500 font-medium">Try adjusting your keywords or location filters.</p>
+                  <h3 className="text-lg sm:text-xl font-bold text-brand-dark mb-2">
+                    {viewMode === 'RESOLVED' ? 'No success stories yet' : viewMode === 'MY_POSTS' ? "You haven't posted any items" : 'No items found'}
+                  </h3>
+                  <p className="text-sm sm:text-base text-slate-500 font-medium">
+                    {viewMode === 'RESOLVED' ? "Check back later to see items that have been reunited." : viewMode === 'MY_POSTS' ? "When you report a lost or found item, it will appear here." : "Try adjusting your keywords or location filters."}
+                  </p>
                 </div>
             )}
           </div>
@@ -420,12 +479,28 @@ export const App: React.FC = () => {
         {/* --- MODALS & DRAWERS --- */}
         <ReportModal isOpen={isReportModalOpen} onClose={() => { setIsReportModalOpen(false); fetchItems(); }} />
         <LoginDrawer isOpen={isLoginDrawerOpen} onClose={() => setIsLoginDrawerOpen(false)} onLoginSuccess={() => {}} />
-        <ClaimModal isOpen={!!selectedItemForClaim} item={selectedItemForClaim} onClose={() => setSelectedItemForClaim(null)} />
-        <MessagesInbox isOpen={isMessagesInboxOpen} onClose={() => setIsMessagesInboxOpen(false)} currentUser={userProfile} />
+        <ClaimModal
+            isOpen={!!selectedItemForClaim}
+            item={selectedItemForClaim}
+            onClose={() => { setSelectedItemForClaim(null); fetchItems(); }}
+            onSuccessOpenInbox={() => {
+              setSelectedItemForClaim(null);
+              fetchItems(); // Refreshes grid to show the green "Connection Established" button
+              setIsMessagesInboxOpen(true); // Automatically slides open the Inbox
+            }}
+        />
+        <MessagesInbox isOpen={isMessagesInboxOpen} onClose={() => { setIsMessagesInboxOpen(false); fetchItems(); }} currentUser={userProfile} />
         <LegalModal isOpen={legalPageOpen !== null} page={legalPageOpen} onClose={() => setLegalPageOpen(null)} />
         <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
+        <ItemDetailsModal
+            isOpen={!!selectedItemForDetails}
+            item={selectedItemForDetails}
+            onClose={() => setSelectedItemForDetails(null)}
+            onClaimClick={(it) => requireAuth(() => { setSelectedItemForDetails(null); setSelectedItemForClaim(it); })}
+            onOpenInbox={() => requireAuth(() => { setSelectedItemForDetails(null); setIsMessagesInboxOpen(true); })}
+        />
 
-        {/* --- USER PROFILE CUSTOMIZATION MODAL --- */}
+        {/* --- USER PROFILE MODAL --- */}
         {isProfileModalOpen && (
             <div className="fixed inset-0 z-[120] flex items-center justify-center bg-brand-dark/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-brand-lightest max-h-[90vh]">
@@ -471,34 +546,16 @@ export const App: React.FC = () => {
                       </div>
 
                       <div className="p-6 border-t border-slate-200 bg-white flex justify-between items-center shrink-0">
-                        <button
-                            onClick={() => setIsVerifyingEmail(false)}
-                            disabled={isSavingProfile}
-                            className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:text-brand-dark hover:bg-slate-100 transition-colors disabled:opacity-50"
-                        >
-                          Back to Edit
-                        </button>
-                        <button
-                            onClick={handleVerifyAndSave}
-                            disabled={isSavingProfile}
-                            className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-primary text-white shadow-md shadow-brand-primary/30 hover:bg-brand-dark transition-all min-w-[140px] flex justify-center items-center"
-                        >
-                          {isSavingProfile ? (
-                              <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                          ) : 'Verify & Save'}
+                        <button onClick={() => setIsVerifyingEmail(false)} disabled={isSavingProfile} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:text-brand-dark hover:bg-slate-100 transition-colors disabled:opacity-50">Back to Edit</button>
+                        <button onClick={handleVerifyAndSave} disabled={isSavingProfile} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-primary text-white shadow-md shadow-brand-primary/30 hover:bg-brand-dark transition-all min-w-[140px] flex justify-center items-center">
+                          {isSavingProfile ? <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : 'Verify & Save'}
                         </button>
                       </div>
                     </div>
                 ) : (
                     <div className="flex-1 flex flex-col overflow-hidden animate-in slide-in-from-left-4 duration-300">
                       <div className="flex-1 overflow-y-auto p-6 sm:p-8 custom-scrollbar">
-                        <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            ref={fileInputRef}
-                            onChange={handleAvatarUpload}
-                        />
+                        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleAvatarUpload} />
 
                         <div className="flex flex-col items-center mb-8">
                           <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
@@ -556,14 +613,8 @@ export const App: React.FC = () => {
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                           Sign Out
                         </button>
-                        <button
-                            onClick={handleInitiateSave}
-                            disabled={isSavingProfile}
-                            className="w-full sm:w-auto px-8 py-3 rounded-xl text-sm font-bold bg-brand-primary text-white shadow-md shadow-brand-primary/30 hover:bg-brand-dark transition-all flex justify-center items-center min-w-[150px]"
-                        >
-                          {isSavingProfile ? (
-                              <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                          ) : 'Save Changes'}
+                        <button onClick={handleInitiateSave} disabled={isSavingProfile} className="w-full sm:w-auto px-8 py-3 rounded-xl text-sm font-bold bg-brand-primary text-white shadow-md shadow-brand-primary/30 hover:bg-brand-dark transition-all flex justify-center items-center min-w-[150px]">
+                          {isSavingProfile ? <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : 'Save Changes'}
                         </button>
                       </div>
                     </div>
