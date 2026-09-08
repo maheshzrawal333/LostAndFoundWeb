@@ -11,10 +11,11 @@ interface FeedbackModalProps {
 type FeedbackType = 'BUG' | 'SUGGESTION' | 'GENERAL';
 
 export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
-    const { token } = useAuth(); // Auth is optional for feedback based on your backend config
+    const { token } = useAuth();
 
     const [feedbackType, setFeedbackType] = useState<FeedbackType>('SUGGESTION');
     const [message, setMessage] = useState('');
+    const [contactEmail, setContactEmail] = useState(''); // Added contact email state
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState('');
@@ -23,6 +24,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
         if (isOpen) {
             setFeedbackType('SUGGESTION');
             setMessage('');
+            setContactEmail(''); // Reset email on open
             setIsSubmitting(false);
             setIsSuccess(false);
             setError('');
@@ -49,7 +51,12 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
             const response = await fetch(`${API_BASE_URL}/feedback`, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ type: feedbackType, message: message.trim() })
+                // Included contactEmail in the backend payload
+                body: JSON.stringify({
+                    type: feedbackType,
+                    message: message.trim(),
+                    contactEmail: contactEmail.trim()
+                })
             });
 
             if (!response.ok) {
@@ -117,6 +124,21 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Added Optional Contact Email Field */}
+                            {!token && (
+                                <div className="mb-6">
+                                    <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide mb-2">Email (Optional)</label>
+                                    <input
+                                        type="email"
+                                        value={contactEmail}
+                                        onChange={(e) => setContactEmail(e.target.value)}
+                                        placeholder="Leave your email if you'd like a reply..."
+                                        className="w-full px-4 py-3 bg-white border border-slate-300 focus:ring-brand-lightest focus:border-brand-primary rounded-xl focus:outline-none focus:ring-2 text-brand-dark font-medium transition-all"
+                                        disabled={isSubmitting}
+                                    />
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide mb-2">Details <span className="text-red-500">*</span></label>
