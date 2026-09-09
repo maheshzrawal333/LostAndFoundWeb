@@ -18,46 +18,58 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
     const [otp, setOtp] = useState('');
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isRequestingOtp, setIsRequestingOtp] = useState(false);
 
-    const registeredPhoneNumber = "+977 98XXXXX123";
+    const isOwnPost = user && item?.reportedByUserId && user.id === item.reportedByUserId;
+    const actionText = item?.type === 'LOST' ? 'I Found This' : 'Claim Item';
 
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && item) {
             setStep('OTP');
             setOtp('');
             setError('');
             setIsSubmitting(false);
+
+            // Automatically request the OTP when the modal opens (unless it's their own post)
+            if (!isOwnPost) {
+                const requestOtp = async () => {
+                    setIsRequestingOtp(true);
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/items/request-otp`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        if (!response.ok) {
+                            throw new Error('Failed to send verification code.');
+                        }
+                    } catch (err) {
+                        setError('Failed to request verification code. Please check your connection.');
+                    } finally {
+                        setIsRequestingOtp(false);
+                    }
+                };
+                requestOtp();
+            }
         }
-    }, [isOpen, item]);
+    }, [isOpen, item, isOwnPost, token]);
 
     if (!isOpen || !item) return null;
 
-    const isOwnPost = user && item.reportedByUserId && user.id === item.reportedByUserId;
-    const actionText = item.type === 'LOST' ? 'I Found This' : 'Claim Item';
-
     const handleNext = async () => {
         if (step === 'OTP') {
-            if (otp.length !== 6) {
+            if (otp.length !== 6 || !/^\d+$/.test(otp)) {
                 setError('Please enter a valid 6-digit verification code.');
                 return;
             }
-            setIsSubmitting(true);
+            // Move to warning screen. The actual cryptographical check happens on final submit.
             setError('');
-            try {
-                await new Promise((resolve) => setTimeout(resolve, 800));
-                if (otp === '123456') {
-                    setStep('CHAT_WARNING');
-                } else {
-                    setError('Invalid verification code.');
-                }
-            } finally {
-                setIsSubmitting(false);
-            }
+            setStep('CHAT_WARNING');
+
         } else if (step === 'CHAT_WARNING') {
             setIsSubmitting(true);
             setError('');
 
-            const submitClaimWithLocation = async (lat: number | null, lng: number | null) => {
+            const submitClaimWithLocation = async (lat: number, lng: number) => {
                 try {
                     const response = await fetch(`${API_BASE_URL}/claims`, {
                         method: 'POST',
@@ -71,7 +83,8 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                             secretAnswer: null,
                             contactEmailOrPhone: user?.email || 'Verified User',
                             latitude: lat,
-                            longitude: lng
+                            longitude: lng,
+                            otp // Enterprise Flow: Pass the real OTP to the backend
                         })
                     });
 
@@ -81,7 +94,15 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                         setError('Could not establish connection. You may have already claimed this item.');
                     } else {
                         const errData = await response.json().catch(() => ({}));
-                        setError(errData.error || 'Could not establish connection. Please try again later.');
+
+                        // If the backend rejects the OTP, kick the user back to the OTP screen
+                        if (errData.message?.toLowerCase().includes('otp') || errData.message?.toLowerCase().includes('code')) {
+                            setStep('OTP');
+                            setError(errData.message);
+                            return;
+                        }
+
+                        setError(errData.message || errData.error || 'Could not establish connection. Please try again later.');
                     }
                 } catch (err) {
                     setError('Network error occurred while opening connection.');
@@ -90,20 +111,50 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                 }
             };
 
-            // FIX: Graceful fallback. If location fails or times out, proceed without it!
+            // Enterprise STRICT Geolocation Requirement
+            let locationResolved = false;
+
+            // 8-second timeout if they completely ignore the browser popup
+            const absoluteTimeout = setTimeout(() => {
+                if (!locationResolved) {
+                    locationResolved = true;
+                    setIsSubmitting(false);
+                    setError("Location access is required to prevent fraud. Please allow location permissions in your browser and try again.");
+                }
+            }, 8000);
+
             if ("geolocation" in navigator) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        submitClaimWithLocation(position.coords.latitude, position.coords.longitude);
+                        if (!locationResolved) {
+                            locationResolved = true;
+                            clearTimeout(absoluteTimeout);
+                            submitClaimWithLocation(position.coords.latitude, position.coords.longitude);
+                        }
                     },
                     (err) => {
-                        console.warn("Location access denied or failed. Proceeding without GPS.", err);
-                        submitClaimWithLocation(null, null);
+                        if (!locationResolved) {
+                            locationResolved = true;
+                            clearTimeout(absoluteTimeout);
+                            setIsSubmitting(false);
+
+                            // Check if they explicitly clicked "Block" or "Deny"
+                            if (err.code === err.PERMISSION_DENIED) {
+                                setError("Location access was denied. You must allow location access in your browser settings to claim this item.");
+                            } else {
+                                setError("Unable to retrieve your location. Please check your device settings and try again.");
+                            }
+                        }
                     },
-                    { enableHighAccuracy: false, timeout: 5000 } // 5 second max wait
+                    { enableHighAccuracy: true, timeout: 8000 } // Force high accuracy for maximum security
                 );
             } else {
-                submitClaimWithLocation(null, null);
+                if (!locationResolved) {
+                    locationResolved = true;
+                    clearTimeout(absoluteTimeout);
+                    setIsSubmitting(false);
+                    setError("Your browser does not support location services, which are strictly required for security.");
+                }
             }
         }
     };
@@ -116,7 +167,6 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                     <div>
                         <h2 className="text-lg font-bold text-white tracking-tight">{actionText}</h2>
                         <p className="text-xs font-medium text-slate-400 mt-0.5">
-                            {/* --- STANDARDIZED TO 6 CHARACTERS --- */}
                             REF: TRK-{item.id.substring(0, 6).toUpperCase()}
                         </p>
                     </div>
@@ -150,10 +200,10 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                                     </div>
                                     <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Enter Verification Code</h3>
                                     <p className="text-sm text-slate-500 font-medium mb-8 max-w-sm">
-                                        We sent a 6-digit verification code to <span className="font-bold text-brand-dark">{registeredPhoneNumber}</span>.
+                                        We sent a 6-digit verification code to <span className="font-bold text-brand-dark">{user?.email || 'your registered email'}</span>.
                                     </p>
 
-                                    <div className="w-full max-w-xs">
+                                    <div className="w-full max-w-xs relative">
                                         <input
                                             type="text"
                                             maxLength={6}
@@ -163,10 +213,16 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                                                 error ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-brand-primary focus:ring-brand-lightest'
                                             }`}
                                             placeholder="------"
-                                            disabled={isSubmitting}
+                                            disabled={isSubmitting || isRequestingOtp}
                                         />
+
+                                        {isRequestingOtp && (
+                                            <div className="absolute -right-12 top-1/2 -translate-y-1/2">
+                                                <svg className="animate-spin h-5 w-5 text-brand-primary" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            </div>
+                                        )}
+
                                         {error && <p className="text-red-500 text-xs font-semibold mt-2">{error}</p>}
-                                        <p className="text-xs text-slate-400 mt-4">Use code <span className="font-bold text-brand-dark">123456</span> to continue.</p>
                                     </div>
                                 </div>
                             )}
@@ -188,6 +244,10 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
                                             <li className="flex gap-4 items-start">
                                                 <svg className="w-6 h-6 text-[#ef4444] shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                                                 <span className="leading-relaxed"><strong className="text-slate-700">Data Security:</strong> NEVER share passwords, banking details, citizenship/ID numbers, or any sensitive information in this chat.</span>
+                                            </li>
+                                            <li className="flex gap-4 items-start">
+                                                <svg className="w-6 h-6 text-[#ef4444] shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                                <span className="leading-relaxed"><strong className="text-slate-700">Location Verification:</strong> To prevent fraudulent claims and system exploitation, your precise location is required and will be securely logged when initiating this connection.</span>
                                             </li>
                                         </ul>
                                     </div>
@@ -220,13 +280,13 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({ isOpen, onClose, item, o
 
                 {!isOwnPost && step !== 'SUCCESS' && (
                     <div className="px-6 py-5 md:px-10 border-t border-slate-200 bg-[#f8fafc] flex justify-between items-center shrink-0">
-                        <button onClick={onClose} disabled={isSubmitting} className="text-[15px] font-bold text-[#64748b] hover:text-[#0f172a] transition-colors focus:outline-none">
+                        <button onClick={onClose} disabled={isSubmitting || isRequestingOtp} className="text-[15px] font-bold text-[#64748b] hover:text-[#0f172a] transition-colors focus:outline-none disabled:opacity-50">
                             Cancel
                         </button>
                         <button
                             onClick={handleNext}
-                            disabled={isSubmitting}
-                            className={`px-8 py-3.5 rounded-xl text-[15px] font-bold shadow-lg transition-all flex items-center justify-center min-w-[140px] focus:outline-none ${step === 'CHAT_WARNING' ? 'bg-[#dc2626] text-white hover:bg-[#b91c1c] shadow-red-600/25' : 'bg-brand-primary text-white hover:bg-brand-dark shadow-brand-primary/30'}`}
+                            disabled={isSubmitting || isRequestingOtp}
+                            className={`px-8 py-3.5 rounded-xl text-[15px] font-bold shadow-lg transition-all flex items-center justify-center min-w-[140px] focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed ${step === 'CHAT_WARNING' ? 'bg-[#dc2626] text-white hover:bg-[#b91c1c] shadow-red-600/25' : 'bg-brand-primary text-white hover:bg-brand-dark shadow-brand-primary/30'}`}
                         >
                             {isSubmitting ? <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : step === 'CHAT_WARNING' ? 'Acknowledge & Open Chat' : 'Continue'}
                         </button>

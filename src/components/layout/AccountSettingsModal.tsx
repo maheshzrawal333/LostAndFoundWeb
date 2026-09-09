@@ -239,7 +239,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({ isOp
                                     disabled={isSavingProfile}
                                 />
                                 {otpError && <p className="text-red-500 text-xs font-semibold mt-2">{otpError}</p>}
-                                <p className="text-xs text-slate-400 mt-4">Use code <span className="font-bold text-brand-dark">123456</span> for testing.</p>
                             </div>
                         </div>
 

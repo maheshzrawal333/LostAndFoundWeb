@@ -18,7 +18,7 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
 
     // Form State
     const [email, setEmail] = useState('');
-    const [phone, setPhone] = useState('+977 '); // Default to Nepal Country Code
+    const [phone, setPhone] = useState('+977 ');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [otp, setOtp] = useState('');
@@ -296,10 +296,12 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
             if (authStep === 'FORM') {
                 await handleRequestOTP();
             } else if (authStep === 'OTP') {
-                if (otp === '123456') {
+                // Enterprise Flow: Validate format, then store it and move to password screen.
+                // Actual cryptographical check happens on the backend during the final reset call.
+                if (otp.length === 6) {
                     setAuthStep('NEW_PASSWORD');
                 } else {
-                    setErrors({ otp: 'Invalid verification code.' });
+                    setErrors({ otp: 'Please enter a valid 6-digit code.' });
                 }
             } else if (authStep === 'NEW_PASSWORD') {
                 await handleResetPassword();
@@ -452,9 +454,6 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
                                     disabled={isLockedOut}
                                 />
                                 {errors.otp && <p className="text-red-500 text-xs font-semibold mt-1.5">{errors.otp}</p>}
-                                {mode === 'FORGOT_PASSWORD' && (
-                                    <p className="text-xs font-medium text-slate-400 mt-3 text-center">Use code 123456 to bypass for testing.</p>
-                                )}
                             </div>
                         )}
 
@@ -526,10 +525,10 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
                                             )}
                                         </div>
                                         <div className="relative">
-                                            {/* STRIPS SPACES ON CHANGE */}
                                             <input
                                                 type={showPassword ? 'text' : 'password'}
                                                 value={password}
+                                                maxLength={25}
                                                 onChange={(e) => setPassword(e.target.value.replace(/\s/g, ''))}
                                                 className={`w-full pl-4 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
                                                     errors.password ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-brand-primary focus:ring-brand-lightest'
@@ -575,10 +574,10 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
                                     <div>
                                         <label className="block text-brand-dark font-bold text-sm mb-1.5">Confirm Password</label>
                                         <div className="relative">
-                                            {/* STRIPS SPACES ON CHANGE */}
                                             <input
                                                 type={showConfirmPassword ? 'text' : 'password'}
                                                 value={confirmPassword}
+                                                maxLength={25}
                                                 onChange={(e) => setConfirmPassword(e.target.value.replace(/\s/g, ''))}
                                                 className={`w-full pl-4 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
                                                     errors.password ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-brand-primary focus:ring-brand-lightest'
@@ -608,10 +607,10 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
                                 <div>
                                     <label className="block text-brand-dark font-bold text-sm mb-1.5">New Password</label>
                                     <div className="relative">
-                                        {/* STRIPS SPACES ON CHANGE */}
                                         <input
                                             type={showPassword ? 'text' : 'password'}
                                             value={password}
+                                            maxLength={25}
                                             onChange={(e) => setPassword(e.target.value.replace(/\s/g, ''))}
                                             className={`w-full pl-4 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
                                                 errors.password ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-brand-primary focus:ring-brand-lightest'
@@ -646,10 +645,10 @@ export const LoginDrawer: React.FC<LoginDrawerProps> = ({ isOpen, onClose, onLog
                                 <div>
                                     <label className="block text-brand-dark font-bold text-sm mb-1.5">Confirm New Password</label>
                                     <div className="relative">
-                                        {/* STRIPS SPACES ON CHANGE */}
                                         <input
                                             type={showConfirmPassword ? 'text' : 'password'}
                                             value={confirmPassword}
+                                            maxLength={25}
                                             onChange={(e) => setConfirmPassword(e.target.value.replace(/\s/g, ''))}
                                             className={`w-full pl-4 pr-12 py-3 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
                                                 errors.password ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:border-brand-primary focus:ring-brand-lightest'

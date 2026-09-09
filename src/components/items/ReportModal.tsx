@@ -19,6 +19,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
     const [step, setStep] = useState<'FORM' | 'OTP'>('FORM');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isRequestingOtp, setIsRequestingOtp] = useState(false);
 
     const [reportType, setReportType] = useState<ItemType | ''>('');
     const [title, setTitle] = useState('');
@@ -102,11 +103,33 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
         return Object.keys(newErrors).length === 0;
     };
 
-    const handleNextStep = () => {
+    const handleNextStep = async () => {
         if (validateForm()) {
-            setStep('OTP');
+            setIsRequestingOtp(true);
             setErrors({});
-            setOtp('');
+
+            try {
+                // API call to trigger the OTP email before advancing to the OTP input screen
+                const response = await fetch(`${API_BASE_URL}/items/request-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || 'Failed to send OTP to your email.');
+                }
+
+                setStep('OTP');
+                setOtp('');
+            } catch (error: any) {
+                setErrors({ general: error.message || 'Failed to request verification code. Please check your connection.' });
+            } finally {
+                setIsRequestingOtp(false);
+            }
         }
     };
 
@@ -147,13 +170,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
     };
 
     const handleSubmit = async () => {
-        if (otp.length !== 6) {
+        if (otp.length !== 6 || !/^\d+$/.test(otp)) {
             setErrors({ otp: 'Please enter a valid 6-digit verification code.' });
-            return;
-        }
-
-        if (otp !== '123456') {
-            setErrors({ otp: 'Invalid verification code. Please try again.' });
             return;
         }
 
@@ -181,7 +199,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                 addressText,
                 dateLostOrFound: new Date().toISOString(),
                 secretVerificationQuestion: null,
-                secretAnswer: null
+                secretAnswer: null,
+                otp // The real OTP is now passed to the backend for cryptographic validation
             };
 
             const response = await fetch(`${API_BASE_URL}/items`, {
@@ -195,12 +214,23 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
+
+                // If the backend rejects the OTP specifically, map the error to the OTP field
+                if (errorData.message?.toLowerCase().includes('otp') || errorData.message?.toLowerCase().includes('code')) {
+                    throw new Error(`OTP:${errorData.message}`);
+                }
+
                 throw new Error(errorData.message || errorData.general || 'Failed to create item');
             }
 
             resetAndClose();
         } catch (error: any) {
-            setErrors({ general: error.message || 'Failed to publish post. Please try again.' });
+            const msg = error.message;
+            if (msg.startsWith('OTP:')) {
+                setErrors({ otp: msg.replace('OTP:', '') });
+            } else {
+                setErrors({ general: msg || 'Failed to publish post. Please try again.' });
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -380,7 +410,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                             </div>
                             <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Security Verification</h3>
                             <p className="text-slate-500 font-medium mb-8 max-w-sm">
-                                To prevent spam and secure your post, please enter the 6-digit code sent to your registered mobile number.
+                                To prevent spam and secure your post, please enter the 6-digit code sent to your registered email.
                             </p>
 
                             <div className="w-full max-w-xs">
@@ -396,7 +426,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                                     disabled={isSubmitting}
                                 />
                                 {errors.otp && <p className="text-red-500 text-xs font-semibold mt-2">{errors.otp}</p>}
-                                <p className="text-xs text-slate-400 mt-4">Use code <span className="font-bold text-brand-dark">123456</span> to continue.</p>
                             </div>
                         </div>
                     )}
@@ -414,9 +443,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                     )}
 
                     {step === 'FORM' ? (
-                        <button onClick={handleNextStep} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-dark text-white shadow-md shadow-brand-dark/30 hover:bg-brand-primary transition-all flex items-center gap-2">
-                            Next Step
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7"></path></svg>
+                        <button onClick={handleNextStep} disabled={isRequestingOtp} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-brand-dark text-white shadow-md shadow-brand-dark/30 hover:bg-brand-primary transition-all flex items-center justify-center gap-2 min-w-[140px] disabled:opacity-70 disabled:cursor-not-allowed">
+                            {isRequestingOtp ? (
+                                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            ) : (
+                                <>Next Step <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7"></path></svg></>
+                            )}
                         </button>
                     ) : (
                         <button
