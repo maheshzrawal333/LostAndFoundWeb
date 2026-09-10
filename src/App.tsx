@@ -10,6 +10,7 @@ import { FeedbackModal } from './components/layout/FeedbackModal';
 import { useAuth } from './context/AuthContext';
 import { ItemDetailsModal } from './components/items/ItemDetailsModal';
 import { AccountSettingsModal } from './components/layout/AccountSettingsModal';
+import { SearchBar } from './components/common/SearchBar';
 
 const API_BASE_URL = 'http://localhost:8081/api/v1';
 
@@ -42,7 +43,6 @@ export const App: React.FC = () => {
     try {
       const params = new URLSearchParams();
 
-      // Map frontend tabs directly to backend queries
       if (viewMode === 'LOST' || viewMode === 'FOUND') {
         params.append('type', viewMode);
         params.append('status', 'OPEN');
@@ -57,7 +57,6 @@ export const App: React.FC = () => {
       if (searchQuery.trim()) params.append('search', searchQuery.trim());
       if (locationQuery.trim()) params.append('location', locationQuery.trim());
 
-      // Backend pages are 0-indexed
       params.append('page', (currentPage - 1).toString());
       params.append('size', itemsPerPage.toString());
 
@@ -69,7 +68,6 @@ export const App: React.FC = () => {
         const data = await res.json();
         const fetchedItems = data.content || (Array.isArray(data) ? data : []);
         setItems(fetchedItems);
-
         setTotalPages(data.totalPages || 1);
       }
     } catch (err) {
@@ -79,16 +77,14 @@ export const App: React.FC = () => {
     }
   };
 
-  // Refetch items when viewMode or token changes, explicitly resetting page to 1
   useEffect(() => {
     if (currentPage !== 1) {
-      setCurrentPage(1); // Changing this triggers the other useEffect below
+      setCurrentPage(1);
     } else {
       fetchItems();
     }
   }, [viewMode, token]);
 
-  // Refetch items when page changes
   useEffect(() => {
     fetchItems();
   }, [currentPage]);
@@ -208,27 +204,16 @@ export const App: React.FC = () => {
             </div>
 
             {(viewMode === 'ALL' || viewMode === 'LOST' || viewMode === 'FOUND') && (
-                <div className="bg-white p-2 rounded-2xl md:rounded-full shadow-lg shadow-slate-200/50 border border-slate-200 flex flex-col md:flex-row items-center gap-2 md:gap-0 w-full max-w-4xl animate-in slide-in-from-top-4 duration-300">
-                  <div className="flex-1 flex items-center px-4 py-2 w-full group">
-                    <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <div className="ml-3 w-full text-left">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">What are you looking for?</label>
-                      <input type="text" placeholder="e.g. Wallet, Sony, Keys..." className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchItems()} />
-                    </div>
-                  </div>
-                  <div className="hidden md:block w-px h-12 bg-slate-200 shrink-0 mx-2"></div>
-                  <div className="flex-1 flex items-center px-4 py-2 w-full group border-t border-slate-100 md:border-none">
-                    <svg className="w-5 h-5 text-slate-400 group-focus-within:text-brand-primary transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    <div className="ml-3 w-full text-left">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Where?</label>
-                      <input type="text" placeholder="e.g. Kathmandu, Bus Park..." className="w-full bg-transparent border-none focus:outline-none text-brand-dark font-semibold placeholder:text-slate-300 placeholder:font-medium text-sm sm:text-base" value={locationQuery} onChange={(e) => setLocationQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchItems()} />
-                    </div>
-                  </div>
-                  <button onClick={() => { setCurrentPage(1); fetchItems(); }} className="w-full md:w-auto bg-brand-primary text-white px-8 py-3.5 sm:py-4 rounded-xl md:rounded-full font-bold hover:bg-brand-dark transition-colors shadow-md shadow-brand-primary/30 mt-2 md:mt-0 flex items-center justify-center shrink-0">
-                    <span className="md:hidden mr-2">Search Items</span>
-                    <svg className="w-5 h-5 hidden md:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                  </button>
-                </div>
+                <SearchBar
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    locationQuery={locationQuery}
+                    setLocationQuery={setLocationQuery}
+                    onSearch={() => {
+                      setCurrentPage(1);
+                      fetchItems();
+                    }}
+                />
             )}
           </div>
 
