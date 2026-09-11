@@ -50,7 +50,8 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onClaimClick, onViewDe
     return (
         <div
             onClick={() => onViewDetails(item)}
-            className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-200 group flex flex-col h-full relative cursor-pointer"
+            /* FIX 1: Replaced h-full with h-fit to prevent the card from artificially stretching */
+            className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-200 group flex flex-col h-fit relative cursor-pointer"
         >
             <div className="relative h-56 w-full overflow-hidden shrink-0 bg-slate-100">
                 <img
@@ -112,7 +113,8 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onClaimClick, onViewDe
                 )}
             </div>
 
-            <div className="p-5 flex flex-col flex-1">
+            {/* FIX 2: Removed flex-1 to prevent the container from inflating */}
+            <div className="p-5 flex flex-col">
                 <div className="flex justify-between items-start mb-2 gap-2">
                     <h3 className="text-lg font-extrabold text-[#1e3a8a] leading-tight line-clamp-1">
                         {item.title}
@@ -122,7 +124,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onClaimClick, onViewDe
                     </span>
                 </div>
 
-                <p className="text-sm text-slate-500 line-clamp-2 mb-4 flex-1 leading-relaxed">
+                <p className="text-sm text-slate-500 line-clamp-2 mb-4 leading-relaxed">
                     {item.description}
                 </p>
 
@@ -137,7 +139,8 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onClaimClick, onViewDe
                     </div>
                 </div>
 
-                <div className="pt-4 border-t border-slate-100 mt-auto">
+                {/* FIX 3: Removed mt-auto so the button sits naturally under the date without creating a gap */}
+                <div className="pt-4 border-t border-slate-100">
                     {isResolved ? (
                         isOwnPost ? (
                             <button
