@@ -88,7 +88,6 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     // Trigger Guided Tour exactly once per user account
     useEffect(() => {
         if (isOpen && activeChatId && canShowActionButtons) {
-            // Appends the username so the tutorial state is bound specifically to this account
             const tourKey = `laf_chat_tour_completed_${currentUser.name.replace(/\s+/g, '_')}`;
             const hasSeenTour = localStorage.getItem(tourKey);
 
@@ -306,35 +305,33 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
         return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
+    // ENTERPRISE FIX: Force strict chronological sorting by comparing timestamps
     const getCleanMessages = (messages: Message[]) => {
-        return messages.filter(msg => msg.sender !== 'system');
+        return [...messages] // Create a safe copy before sorting
+            .filter(msg => msg.sender !== 'system')
+            .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
     };
 
-    // Dynamic Tour Logic based on Physical Possession ---
+    // Dynamic Tour Logic based on Physical Possession
     let step1Text = "If you determine this is not a match, click here. This sends a mutual closure request to safely conclude the conversation.";
     let step2Text = "To safely finalize the handover, securely exchange the generated authorization code here.";
 
     if (activeChat) {
-        // Owner = The person who originally LOST the item.
         const isOwner = (activeChat.isPoster && activeChat.itemType === 'LOST') || (!activeChat.isPoster && activeChat.itemType === 'FOUND');
 
-        // STEP 1: Not a Match Copy
         if (isOwner) {
             step1Text = "If you determine this is not your item, click here. This sends a mutual closure request to safely conclude the conversation.";
         } else {
             step1Text = "If you determine the other party is not the rightful owner, click here. This sends a mutual closure request to safely conclude the conversation.";
         }
 
-        // STEP 2: Finalize Handover Copy
         if (activeChat.isPoster) {
-            // The Poster ALWAYS generates the code
             if (isOwner) {
                 step2Text = "Upon receiving your item, generate a secure authorization code here and provide it to the finder to formally verify the return.";
             } else {
                 step2Text = "Prior to handing over the item, generate a secure authorization code here and provide it to the rightful owner to formally record the transfer.";
             }
         } else {
-            // The Claimer ALWAYS enters the code
             if (isOwner) {
                 step2Text = "Upon receiving your item, request the secure authorization code from the finder and enter it here to formally verify the return.";
             } else {
@@ -344,14 +341,14 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
     }
 
     return (
-        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-brand-dark/70 backdrop-blur-sm p-0 md:p-8 animate-in fade-in duration-200">
-
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-brand-dark/70 backdrop-blur-sm p-0 md:p-8 animate-in fade-in duration-200 overflow-hidden">
             <div className="bg-white md:rounded-2xl shadow-2xl w-full h-full md:h-[85vh] md:max-w-6xl flex overflow-hidden border-0 md:border border-brand-lightest relative">
 
                 {tutorialStep > 0 && (
                     <div className="absolute inset-0 bg-[#0f172a]/75 z-[50] backdrop-blur-[2px] animate-in fade-in duration-300 pointer-events-auto" />
                 )}
 
+                {/* Sidebar: Chat List */}
                 <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] flex-col border-r border-slate-200 bg-slate-50 shrink-0 ${tutorialStep === 0 ? 'relative z-20' : ''}`}>
                     <div className="bg-slate-950 p-4 flex justify-between items-center shrink-0 h-20 border-b border-slate-800">
                         <div className="flex items-center gap-3">
@@ -427,16 +424,19 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                     </div>
                 </div>
 
-                <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-white ${tutorialStep === 0 ? 'relative z-10' : ''}`}>
+                {/* Main Chat Area */}
+                <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-white ${tutorialStep === 0 ? 'relative z-10' : ''} min-w-0 overflow-hidden`}>
                     {activeChat ? (
                         <>
-                            <div className={`bg-white px-4 md:px-6 h-20 border-b border-slate-200 flex justify-between items-center shrink-0 shadow-sm relative ${tutorialStep > 0 ? '' : 'z-10'}`}>
-                                <div className="flex items-center gap-3 md:gap-4">
-                                    <button onClick={() => setActiveChatId(null)} className="md:hidden text-slate-500 hover:text-brand-dark p-2 -ml-2 rounded-full">
+                            {/* ACTIVE CHAT HEADER */}
+                            <div className={`bg-white px-2 sm:px-4 md:px-6 min-h-[4rem] sm:min-h-[5rem] py-2 border-b border-slate-200 flex justify-between items-center shrink-0 shadow-sm relative w-full ${tutorialStep > 0 ? '' : 'z-10'}`}>
+
+                                <div className="flex items-center gap-2 sm:gap-3 md:gap-4 flex-1 min-w-0 pr-2">
+                                    <button onClick={() => setActiveChatId(null)} className="md:hidden text-slate-500 hover:text-brand-dark p-1 sm:p-2 -ml-1 sm:-ml-2 rounded-full shrink-0">
                                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>
                                     </button>
 
-                                    <div className="w-10 h-10 rounded-full bg-brand-lightest flex items-center justify-center text-brand-primary font-bold border border-brand-light overflow-hidden shrink-0">
+                                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-brand-lightest flex items-center justify-center text-brand-primary font-bold border border-brand-light overflow-hidden shrink-0">
                                         {activeChat.otherUserAvatar ? (
                                             <img src={activeChat.otherUserAvatar} alt={activeChat.otherUser} className="w-full h-full object-cover" />
                                         ) : (
@@ -444,14 +444,14 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                         )}
                                     </div>
 
-                                    <div>
-                                        <h3 className="text-base font-bold text-brand-dark leading-tight flex items-center gap-2">
-                                            <span className="truncate max-w-[120px] sm:max-w-xs">{activeChat.itemTitle}</span>
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="text-sm sm:text-base font-bold text-brand-dark leading-tight flex items-center gap-1.5 sm:gap-2">
+                                            <span className="truncate block">{activeChat.itemTitle}</span>
                                             {activeChat.status === 'RESOLVED' && (
-                                                <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider hidden sm:inline-block">Resolved</span>
+                                                <span className="bg-green-100 text-green-700 text-[9px] sm:text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider hidden sm:inline-block shrink-0">Resolved</span>
                                             )}
                                         </h3>
-                                        <p className="text-[10px] sm:text-xs font-semibold text-slate-500 truncate">
+                                        <p className="text-[10px] sm:text-xs font-semibold text-slate-500 truncate block">
                                             With <span className="text-brand-primary">{activeChat.otherUser}</span> • {activeChat.reference}
                                         </p>
                                     </div>
@@ -459,14 +459,13 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
 
                                 <div className="flex items-center gap-1 sm:gap-3 shrink-0">
                                     {canShowActionButtons && (
-                                        <div className="flex gap-2">
-
+                                        <div className="flex gap-1.5 sm:gap-2">
                                             <div className={`rounded-lg ${tutorialStep === 1 ? 'relative z-[60] bg-white ring-[4px] ring-[#3b82f6]/30 shadow-2xl scale-105 transition-transform' : 'relative'}`}>
                                                 {tutorialStep === 1 && <div className="absolute inset-0 z-10" />}
                                                 <button
                                                     onClick={() => handleAction('request-close')}
                                                     disabled={isActionLoading || tutorialStep > 0}
-                                                    className={`text-[10px] sm:text-xs font-bold transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 ${
+                                                    className={`text-[10px] sm:text-xs font-bold transition-all px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-sm flex items-center gap-1 sm:gap-1.5 ${
                                                         tutorialStep === 1
                                                             ? 'bg-blue-50 text-[#1e40af] border-2 border-[#2563eb]'
                                                             : tutorialStep === 2
@@ -474,13 +473,13 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800 border border-slate-200'
                                                     }`}
                                                 >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                     <span className="hidden sm:inline">Not a Match</span>
                                                 </button>
 
                                                 {tutorialStep === 1 && (
-                                                    <div className="absolute top-full right-0 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 mt-4 w-[260px] sm:w-72 bg-white rounded-xl shadow-2xl p-4 sm:p-5 border border-slate-200 z-50 animate-in zoom-in-95 duration-200 cursor-default">
-                                                        <div className="absolute -top-2 right-6 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 w-4 h-4 bg-white transform rotate-45 border-l border-t border-slate-200"></div>
+                                                    <div className="absolute top-full right-0 mt-3 w-[240px] sm:w-72 bg-white rounded-xl shadow-2xl p-4 sm:p-5 border border-slate-200 z-[100] animate-in zoom-in-95 duration-200 origin-top-right">
+                                                        <div className="absolute -top-2 right-4 w-4 h-4 bg-white transform rotate-45 border-l border-t border-slate-200"></div>
                                                         <div className="relative z-10">
                                                             <div className="flex items-center gap-2 mb-2">
                                                                 <span className="bg-[#2563eb] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Step 1 of 2</span>
@@ -506,7 +505,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                     <button
                                                         onClick={() => handleAction('request-resolve-otp', 'POST')}
                                                         disabled={isActionLoading || tutorialStep > 0}
-                                                        className={`text-[10px] sm:text-xs font-bold transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 ${
+                                                        className={`text-[10px] sm:text-xs font-bold transition-all px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-sm flex items-center gap-1 sm:gap-1.5 ${
                                                             tutorialStep === 2
                                                                 ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-600'
                                                                 : tutorialStep === 1
@@ -514,14 +513,14 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                                     : 'bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200'
                                                         }`}
                                                     >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                                                         <span className="hidden sm:inline">Generate Code</span>
                                                     </button>
                                                 ) : (
                                                     <button
                                                         onClick={() => setIsResolvingUI(true)}
                                                         disabled={isActionLoading || tutorialStep > 0}
-                                                        className={`text-[10px] sm:text-xs font-bold transition-all px-2 sm:px-4 py-2 rounded-lg shadow-sm flex items-center gap-1.5 ${
+                                                        className={`text-[10px] sm:text-xs font-bold transition-all px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-sm flex items-center gap-1 sm:gap-1.5 ${
                                                             tutorialStep === 2
                                                                 ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-600'
                                                                 : tutorialStep === 1
@@ -529,14 +528,14 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                                     : 'bg-green-50 text-green-600 hover:bg-green-500 hover:text-white border border-green-200'
                                                         }`}
                                                     >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
                                                         <span className="hidden sm:inline">Enter Code</span>
                                                     </button>
                                                 )}
 
                                                 {tutorialStep === 2 && (
-                                                    <div className="absolute top-full right-0 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 mt-4 w-[260px] sm:w-72 bg-white rounded-xl shadow-2xl p-4 sm:p-5 border border-slate-200 z-50 animate-in zoom-in-95 duration-200">
-                                                        <div className="absolute -top-2 right-6 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 w-4 h-4 bg-white transform rotate-45 border-l border-t border-slate-200"></div>
+                                                    <div className="absolute top-full right-0 mt-3 w-[240px] sm:w-72 bg-white rounded-xl shadow-2xl p-4 sm:p-5 border border-slate-200 z-[100] animate-in zoom-in-95 duration-200 origin-top-right">
+                                                        <div className="absolute -top-2 right-4 w-4 h-4 bg-white transform rotate-45 border-l border-t border-slate-200"></div>
                                                         <div className="relative z-10">
                                                             <div className="flex items-center gap-2 mb-2">
                                                                 <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Step 2 of 2</span>
@@ -558,7 +557,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                         </div>
                                     )}
 
-                                    <button onClick={onClose} className="text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0 ml-1">
+                                    <button onClick={onClose} className="text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-1.5 sm:p-2 rounded-full border border-slate-200 shrink-0 hidden sm:block ml-1">
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     </button>
                                 </div>
@@ -568,11 +567,11 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
 
                                 {activeChat.status === 'OPEN' && activeChat.closureRequestedByMe && (
                                     <div className="bg-slate-100 border-b border-slate-200 px-4 sm:px-6 py-3 flex justify-between items-center gap-3 shrink-0 shadow-inner">
-                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs font-bold text-slate-600">
-                                            <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                            Waiting for {activeChat.otherUser.split(' ')[0]} to confirm closure.
+                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs font-bold text-slate-600 min-w-0">
+                                            <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            <span className="truncate">Waiting for {activeChat.otherUser.split(' ')[0]} to confirm closure.</span>
                                         </div>
-                                        <button onClick={() => handleAction('cancel-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-white text-slate-500 border border-slate-300 hover:bg-slate-200 px-3 py-1.5 rounded-lg shadow-sm">Cancel Request</button>
+                                        <button onClick={() => handleAction('cancel-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-white text-slate-500 border border-slate-300 hover:bg-slate-200 px-3 py-1.5 rounded-lg shadow-sm shrink-0">Cancel Request</button>
                                     </div>
                                 )}
 
@@ -580,11 +579,11 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                     <div className="bg-blue-50 border-b border-blue-200 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 shrink-0 shadow-inner animate-in fade-in slide-in-from-top-2 duration-300">
                                         <div className="flex items-start gap-2 text-[11px] sm:text-xs font-bold text-blue-800">
                                             <svg className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                            {activeChat.otherUser.split(' ')[0]} wants to close this chat as 'Not a Match'. Do you agree?
+                                            <span>{activeChat.otherUser.split(' ')[0]} wants to close this chat as 'Not a Match'. Do you agree?</span>
                                         </div>
-                                        <div className="flex gap-2 self-end sm:self-auto">
+                                        <div className="flex gap-2 self-end sm:self-auto shrink-0">
                                             <button onClick={() => handleAction('cancel-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-white text-slate-600 border border-slate-300 hover:bg-slate-100 px-3 py-1.5 rounded-lg shadow-sm">Decline</button>
-                                            <button onClick={() => handleAction('approve-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 px-4 py-1.5 rounded-lg shadow-sm flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg> Approve Close</button>
+                                            <button onClick={() => handleAction('approve-close')} disabled={isActionLoading} className="text-[10px] font-bold bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 px-4 py-1.5 rounded-lg shadow-sm flex items-center gap-1"><svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg> Approve Close</button>
                                         </div>
                                     </div>
                                 )}
@@ -593,18 +592,18 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                     <div className="flex-1 p-6 flex flex-col items-center justify-center bg-slate-50 animate-in fade-in duration-300">
                                         {activeChat.isPoster ? (
                                             <>
-                                                <div className="w-16 h-16 bg-[#eff6ff] text-[#3b82f6] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#dbeafe]">
+                                                <div className="w-16 h-16 bg-[#eff6ff] text-[#3b82f6] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#dbeafe] shrink-0">
                                                     <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                                                 </div>
-                                                <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Share this Code</h3>
+                                                <h3 className="text-2xl font-extrabold text-brand-dark mb-2 text-center">Share this Code</h3>
                                                 <p className="text-sm text-slate-500 font-medium mb-8 max-w-sm text-center">
                                                     Show this secure 6-digit code to the other user. They must enter it on their phone to verify the hand-off.
                                                 </p>
-                                                <div className="bg-white border-2 border-slate-200 px-8 py-5 rounded-2xl shadow-sm mb-8">
+                                                <div className="bg-white border-2 border-slate-200 px-8 py-5 rounded-2xl shadow-sm mb-8 text-center">
                                                     <span className="text-4xl tracking-[0.3em] font-mono font-extrabold text-brand-primary">{activeChat.resolutionOtp}</span>
                                                 </div>
-                                                <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-8 animate-pulse">
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-8 animate-pulse text-center">
+                                                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                     Waiting for {activeChat.otherUser.split(' ')[0]} to submit...
                                                 </div>
                                                 <button onClick={() => handleAction('cancel-resolve-otp')} disabled={isActionLoading} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 bg-slate-200 hover:bg-slate-300 transition-colors">
@@ -613,10 +612,10 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                             </>
                                         ) : (
                                             <>
-                                                <div className="w-16 h-16 bg-[#ecfdf5] text-[#10b981] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#d1fae5]">
+                                                <div className="w-16 h-16 bg-[#ecfdf5] text-[#10b981] rounded-full flex items-center justify-center mb-6 shadow-sm border-[4px] border-[#d1fae5] shrink-0">
                                                     <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
                                                 </div>
-                                                <h3 className="text-2xl font-extrabold text-brand-dark mb-2">Finalize Resolution</h3>
+                                                <h3 className="text-2xl font-extrabold text-brand-dark mb-2 text-center">Finalize Resolution</h3>
                                                 <p className="text-sm text-slate-500 font-medium mb-8 max-w-sm text-center">
                                                     To securely confirm the exchange of this item, please enter the 6-digit code provided by the poster.
                                                 </p>
@@ -645,7 +644,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                         disabled={isActionLoading}
                                                         className="px-8 py-2.5 rounded-xl text-sm font-bold bg-green-500 text-white shadow-md hover:bg-green-600 transition-all flex items-center justify-center min-w-[140px]"
                                                     >
-                                                        {isActionLoading ? <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : 'Verify & Resolve'}
+                                                        {isActionLoading ? <svg className="animate-spin h-5 w-5 text-white shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : 'Verify & Resolve'}
                                                     </button>
                                                 </div>
                                             </>
@@ -662,10 +661,10 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                             </div>
                                         )}
 
-                                        <div className="flex-1 p-4 sm:p-6 overflow-y-auto flex flex-col gap-4 custom-scrollbar bg-slate-50 relative z-0">
+                                        <div className="flex-1 p-3 sm:p-6 overflow-y-auto flex flex-col gap-3 sm:gap-4 custom-scrollbar bg-slate-50 relative z-0">
                                             {getCleanMessages(activeChat.messages).map((msg) => (
                                                 <div key={msg.id} className={`flex flex-col ${msg.sender === 'me' ? 'items-end' : 'items-start'}`}>
-                                                    <div className={`max-w-[85%] sm:max-w-[70%] px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl text-sm font-medium shadow-sm ${
+                                                    <div className={`max-w-[85%] sm:max-w-[70%] px-3.5 sm:px-5 py-2 sm:py-3 rounded-2xl text-sm font-medium shadow-sm break-words ${
                                                         msg.sender === 'me'
                                                             ? 'bg-brand-primary text-white rounded-tr-sm'
                                                             : 'bg-white border border-slate-200 text-brand-dark rounded-tl-sm'
@@ -684,7 +683,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                                                         )}
                                                         {msg.text && <div>{msg.text}</div>}
                                                     </div>
-                                                    <span className="text-[10px] font-bold text-slate-400 mt-1 mx-1">{formatTime(msg.time)}</span>
+                                                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 mt-1 mx-1">{formatTime(msg.time)}</span>
                                                 </div>
                                             ))}
                                             <div ref={messagesEndRef} />
@@ -692,7 +691,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
 
                                         {activeChat.status === 'RESOLVED' ? (
                                             <div className="p-4 bg-slate-100 border-t border-slate-200 shrink-0 text-center flex flex-col items-center justify-center gap-1">
-                                                <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                                <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chat Closed</p>
                                             </div>
                                         ) : (
@@ -705,36 +704,36 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
 
                                                 {pendingFile && (
                                                     <div className="px-4 pt-3 pb-1 flex items-center">
-                                                        <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-3 pr-8 relative">
+                                                        <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-3 pr-8 relative min-w-0">
                                                             {pendingFile.type.startsWith('image/') && pendingFileUrl ? (
-                                                                <img src={pendingFileUrl} alt="Preview" className="w-10 h-10 object-cover rounded-md border border-slate-300" />
+                                                                <img src={pendingFileUrl} alt="Preview" className="w-10 h-10 object-cover rounded-md border border-slate-300 shrink-0" />
                                                             ) : (
-                                                                <div className="w-10 h-10 bg-slate-200 rounded-md flex items-center justify-center">
+                                                                <div className="w-10 h-10 bg-slate-200 rounded-md flex items-center justify-center shrink-0">
                                                                     <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
                                                                 </div>
                                                             )}
-                                                            <div className="flex flex-col">
-                                                                <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{pendingFile.name}</span>
+                                                            <div className="flex flex-col min-w-0">
+                                                                <span className="text-xs font-bold text-slate-600 truncate max-w-[120px] sm:max-w-[150px]">{pendingFile.name}</span>
                                                                 <span className="text-[10px] text-slate-400">{(pendingFile.size / 1024 / 1024).toFixed(2)} MB</span>
                                                             </div>
-                                                            <button type="button" onClick={removePendingFile} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm">
+                                                            <button type="button" onClick={removePendingFile} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm shrink-0">
                                                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                             </button>
                                                         </div>
                                                     </div>
                                                 )}
 
-                                                <form onSubmit={sendMessage} className="p-3 sm:p-4 flex gap-2 sm:gap-3 items-end pb-safe">
+                                                <form onSubmit={sendMessage} className="p-2 sm:p-4 flex gap-1.5 sm:gap-3 items-end pb-safe">
                                                     <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileSelect} accept="image/jpeg, image/png, image/webp, application/pdf" />
                                                     <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 sm:p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-lightest rounded-full transition-colors focus:outline-none shrink-0 mb-0.5" disabled={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther || tutorialStep > 0}>
                                                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                                                     </button>
-                                                    <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther ? "Chat paused pending closure confirmation..." : "Type a message..."} disabled={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther || tutorialStep > 0} className="flex-1 px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary text-sm font-medium text-brand-dark resize-none min-h-[45px] sm:min-h-[50px] max-h-[100px] custom-scrollbar disabled:opacity-60" rows={1} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(e); } }} />
+                                                    <textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther ? "Chat paused..." : "Type a message..."} disabled={activeChat.closureRequestedByMe || activeChat.closureRequestedByOther || tutorialStep > 0} className="flex-1 min-w-0 px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary text-sm font-medium text-brand-dark resize-none min-h-[45px] sm:min-h-[50px] max-h-[100px] custom-scrollbar disabled:opacity-60" rows={1} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(e); } }} />
                                                     <button type="submit" disabled={(!chatInput.trim() && !pendingFile) || isSending || activeChat.closureRequestedByMe || activeChat.closureRequestedByOther || tutorialStep > 0} className="w-11 h-11 sm:w-12 sm:h-12 bg-brand-primary text-white rounded-full flex items-center justify-center hover:bg-brand-dark transition-all shadow-md disabled:opacity-50 disabled:shadow-none focus:outline-none shrink-0 mb-0.5">
                                                         {isSending ? (
-                                                            <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                            <svg className="animate-spin h-5 w-5 text-white shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                                         ) : (
-                                                            <svg className="w-5 h-5 -ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                                                            <svg className="w-5 h-5 -ml-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
                                                         )}
                                                     </button>
                                                 </form>
@@ -749,7 +748,7 @@ export const MessagesInbox: React.FC<MessagesInboxProps> = ({ isOpen, onClose, c
                             <button onClick={onClose} className="absolute top-6 right-6 text-slate-400 hover:text-brand-dark transition-colors bg-slate-50 p-2 rounded-full border border-slate-200 shrink-0 hidden md:block">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
-                            <svg className="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03-8-9-8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                            <svg className="w-16 h-16 mb-4 opacity-50 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03-8-9-8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
                             <p className="font-medium">Select a conversation to view messages</p>
                         </div>
                     )}
