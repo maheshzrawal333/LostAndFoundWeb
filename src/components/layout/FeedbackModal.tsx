@@ -3,6 +3,11 @@ import { useAuth } from '../../context/AuthContext';
 
 const API_BASE_URL = 'https://lostandfoundbackend-lt0z.onrender.com/api/v1';
 
+// Enterprise Security Constants
+const MAX_MESSAGE_LENGTH = 1000;
+const MAX_EMAIL_LENGTH = 100;
+const FEEDBACK_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes in milliseconds
+
 interface FeedbackModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -34,9 +39,38 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
     if (!isOpen) return null;
 
     const handleSubmit = async () => {
+        // 1. Client-Side Spam Prevention (Cooldown Check)
+        const lastSubmit = localStorage.getItem('laf_feedback_timestamp');
+        if (lastSubmit) {
+            const timePassed = Date.now() - parseInt(lastSubmit, 10);
+            if (timePassed < FEEDBACK_COOLDOWN_MS) {
+                const minutesLeft = Math.ceil((FEEDBACK_COOLDOWN_MS - timePassed) / 60000);
+                setError(`Spam protection: Please wait ${minutesLeft} minute(s) before submitting again.`);
+                return;
+            }
+        }
+
+        // 2. Strict Input Validation
         if (!message.trim()) {
             setError('Please enter your feedback details before submitting.');
             return;
+        }
+
+        if (message.length > MAX_MESSAGE_LENGTH) {
+            setError(`Message cannot exceed ${MAX_MESSAGE_LENGTH} characters.`);
+            return;
+        }
+
+        if (contactEmail) {
+            if (contactEmail.length > MAX_EMAIL_LENGTH) {
+                setError(`Email cannot exceed ${MAX_EMAIL_LENGTH} characters.`);
+                return;
+            }
+            // Basic Regex for valid email structure
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+                setError('Please enter a valid email address.');
+                return;
+            }
         }
 
         setError('');
@@ -62,6 +96,9 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                 throw new Error('Failed to submit feedback');
             }
 
+            // Record successful submission time to enforce future cooldowns
+            localStorage.setItem('laf_feedback_timestamp', Date.now().toString());
+
             setIsSuccess(true);
             setTimeout(() => {
                 onClose();
@@ -75,10 +112,9 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
 
     return (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-brand-dark/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            {/* ENTERPRISE FIX 1: Added max-h-[calc(100dvh-2rem)] to strictly bound the modal to the viewport */}
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-brand-lightest transition-all max-h-[calc(100dvh-2rem)]">
 
-                {/* Header (Pinned) */}
+                {/* Header */}
                 <div className="bg-slate-950 p-4 sm:p-5 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-brand-light">
@@ -102,10 +138,8 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                         <p className="text-slate-500 font-medium">Your feedback has been successfully submitted. We review every message to improve our platform.</p>
                     </div>
                 ) : (
-                    // ENTERPRISE FIX 2: Added flex-1 min-h-0 to wrapper to allow internal scrolling
                     <div className="flex flex-col flex-1 min-h-0">
-
-                        {/* Body (Scrollable) */}
+                        {/* Body */}
                         <div className="p-5 sm:p-8 overflow-y-auto bg-white flex-1 custom-scrollbar">
                             <p className="text-sm text-slate-500 font-medium mb-5">
                                 We are constantly updating Lost And Found Nepal. Let us know if you found a bug, have a feature suggestion, or just want to share your experience.
@@ -113,7 +147,6 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
 
                             <div className="mb-5">
                                 <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide mb-3">Feedback Type</label>
-                                {/* ENTERPRISE FIX 3: Changed to a 3-column grid even on mobile to save vertical space */}
                                 <div className="grid grid-cols-3 gap-2 sm:gap-3">
                                     <button onClick={() => setFeedbackType('BUG')} className={`py-2 px-1 sm:py-3 sm:px-4 rounded-xl border-2 font-bold text-[11px] sm:text-sm transition-all flex flex-col items-center gap-1 sm:gap-1.5 ${feedbackType === 'BUG' ? 'border-red-500 bg-red-50 text-red-700 shadow-sm' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
@@ -135,8 +168,12 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                                     <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide mb-2">Email (Optional)</label>
                                     <input
                                         type="email"
+                                        maxLength={MAX_EMAIL_LENGTH}
                                         value={contactEmail}
-                                        onChange={(e) => setContactEmail(e.target.value)}
+                                        onChange={(e) => {
+                                            setContactEmail(e.target.value);
+                                            setError(''); // Clear error on typing
+                                        }}
                                         placeholder="Leave your email if you'd like a reply..."
                                         className="w-full px-4 py-3 bg-white border border-slate-300 focus:ring-brand-lightest focus:border-brand-primary rounded-xl focus:outline-none focus:ring-2 text-brand-dark font-medium transition-all"
                                         disabled={isSubmitting}
@@ -145,21 +182,29 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                             )}
 
                             <div>
-                                <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide mb-2">Details <span className="text-red-500">*</span></label>
-                                {/* ENTERPRISE FIX 4: Reduced default rows to 4 to ensure mobile keyboards don't obscure input */}
+                                <div className="flex justify-between items-end mb-2">
+                                    <label className="block text-xs font-bold text-brand-dark uppercase tracking-wide">Details <span className="text-red-500">*</span></label>
+                                    <span className={`text-xs font-bold ${message.length >= MAX_MESSAGE_LENGTH ? 'text-red-500' : 'text-slate-400'}`}>
+                                        {message.length} / {MAX_MESSAGE_LENGTH}
+                                    </span>
+                                </div>
                                 <textarea
                                     rows={4}
+                                    maxLength={MAX_MESSAGE_LENGTH}
                                     value={message}
-                                    onChange={(e) => setMessage(e.target.value)}
+                                    onChange={(e) => {
+                                        setMessage(e.target.value);
+                                        setError(''); // Clear error on typing
+                                    }}
                                     placeholder={feedbackType === 'BUG' ? "Please describe the bug..." : feedbackType === 'SUGGESTION' ? "What feature would you like to see?" : "Tell us what's on your mind..."}
                                     className={`w-full px-4 py-3 bg-white border ${error ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:ring-brand-lightest focus:border-brand-primary'} rounded-xl focus:outline-none focus:ring-2 text-brand-dark font-medium resize-none transition-all`}
                                     disabled={isSubmitting}
                                 />
-                                {error && <p className="text-red-500 text-xs font-semibold mt-2">{error}</p>}
+                                {error && <p className="text-red-500 text-xs font-bold mt-2 animate-in fade-in">{error}</p>}
                             </div>
                         </div>
 
-                        {/* Footer (Pinned to bottom of modal) */}
+                        {/* Footer */}
                         <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
                             <button onClick={onClose} disabled={isSubmitting} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:text-brand-dark hover:bg-slate-200 transition-colors disabled:opacity-50">Cancel</button>
                             <button onClick={handleSubmit} disabled={isSubmitting} className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#113b92] text-white shadow-md hover:bg-brand-dark transition-all disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[140px]">
