@@ -12,7 +12,7 @@ import { ItemDetailsModal } from './components/items/ItemDetailsModal';
 import { AccountSettingsModal } from './components/layout/AccountSettingsModal';
 import { SearchBar } from './components/common/SearchBar';
 
-const API_BASE_URL = 'http://localhost:8081/api/v1';
+const API_BASE_URL = 'https://lostandfoundbackend-lt0z.onrender.com/api/v1';
 
 export const App: React.FC = () => {
   const { user, token, isAuthenticated, logout } = useAuth();

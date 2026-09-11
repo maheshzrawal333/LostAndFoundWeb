@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
-// Updated to your new live Render URL
 const API_BASE_URL = 'https://lostandfoundbackend-lt0z.onrender.com/api/v1';
 
 interface FeedbackModalProps {

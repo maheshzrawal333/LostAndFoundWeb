@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { NEPAL_LOCATIONS } from '../../constants/nepalLocations';
 import imageCompression from 'browser-image-compression';
 
-const API_BASE_URL = 'http://localhost:8081/api/v1';
+const API_BASE_URL = 'https://lostandfoundbackend-lt0z.onrender.com/api/v1';
 
 interface AccountSettingsModalProps {
     isOpen: boolean;

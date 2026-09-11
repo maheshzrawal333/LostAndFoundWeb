@@ -4,7 +4,7 @@ import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import imageCompression from 'browser-image-compression';
 
-const API_BASE_URL = 'http://localhost:8081/api/v1';
+const API_BASE_URL = 'https://lostandfoundbackend-lt0z.onrender.com/api/v1';
 
 interface MessagesInboxProps {
     isOpen: boolean;
