@@ -106,6 +106,8 @@ There are no unit tests in this repo. The app is covered by browser-based end-to
 
 If you rename buttons, labels or page elements here, check that the QA tests' locators still match.
 
+The [backend repo](https://github.com/maheshzrawal333/LostAndFoundBackend) also has **Postman API tests** for the API this app depends on. If something looks broken in the UI, running those first shows whether the API is the cause.
+
 ## ☁️ Deployment
 
 Hosted on **Cloudflare Pages** at [lostandfoundnepal.pages.dev](https://lostandfoundnepal.pages.dev/).
