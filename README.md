@@ -2,7 +2,7 @@
 
 The React frontend for **Lost & Found Nepal**, a web app where people report lost items, post found items, and claim belongings back.
 
-🌐 **Live site:** [lostandfoundnepal.pages.dev](https://lostandfoundnepal.pages.dev/)
+🌐 **Live site:** [lostandfoundnepal.pages.dev](https://lostandfoundnepal.com)
 
 > **A personal project.** I built this on my own to practise full-stack development. It isn't a commercial product and isn't affiliated with any organisation.
 
@@ -110,7 +110,7 @@ The [backend repo](https://github.com/maheshzrawal333/LostAndFoundBackend) also 
 
 ## ☁️ Deployment
 
-Hosted on **Cloudflare Pages** at [lostandfoundnepal.pages.dev](https://lostandfoundnepal.pages.dev/).
+Hosted on **Cloudflare Pages** at [lostandfoundnepal.com](https://lostandfoundnepal.com).
 
 Typical Vite settings for Pages are build command `npm run build` and output directory `dist`. The deployed site talks to the production backend, which runs as a Docker container (see the [backend repo](https://github.com/maheshzrawal333/LostAndFoundBackend)).
 
