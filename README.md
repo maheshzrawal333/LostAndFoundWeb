@@ -2,7 +2,7 @@
 
 The React frontend for **Lost & Found Nepal**, a web app where people report lost items, post found items, and claim belongings back.
 
-🌐 **Live site:** [lostandfoundnepal.pages.dev](https://lostandfoundnepal.com)
+🌐 **Live site:** [lostandfoundnepal.com](https://lostandfoundnepal.com)
 
 > **A personal project.** I built this on my own to practise full-stack development. It isn't a commercial product and isn't affiliated with any organisation.
 
